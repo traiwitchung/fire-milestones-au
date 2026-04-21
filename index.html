@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="FIRE" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0b1120" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
+  <title>FIRE Milestones — Australia</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+  <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0b1120;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    html { -webkit-text-size-adjust: 100%; }
+    /* Prevent iOS Safari from auto-zooming when focusing an input */
+    @media (max-width: 640px) {
+      input, select, textarea { font-size: 16px !important; }
+      input[type="number"], input[type="text"] {
+        max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box;
+      }
+    }
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
+      background: rgba(255,255,255,0.08); border-radius: 3px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; width: 18px; height: 18px;
+      background: #d4a052; border-radius: 50%; cursor: pointer;
+      border: 2px solid rgba(0,0,0,0.3);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 18px; height: 18px; background: #d4a052; border-radius: 50%;
+      cursor: pointer; border: 2px solid rgba(0,0,0,0.3);
+    }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+    ::-webkit-scrollbar-thumb { background: rgba(212,160,82,0.3); border-radius: 4px; }
+    ::selection { background: rgba(212,160,82,0.3); }
+    .ms-card { transition: border-color 0.2s, transform 0.2s, background 0.2s; }
+    .ms-card:hover { border-color: rgba(255,255,255,0.14) !important; transform: translateY(-2px); }
+    .ms-stat-card { transition: border-color 0.2s, background 0.2s; }
+    .ms-stat-card:hover { border-color: rgba(255,255,255,0.12) !important; background: rgba(255,255,255,0.05) !important; }
+    .ms-export-btn { transition: all 0.15s; }
+    .ms-export-btn:hover { background: rgba(212, 160, 82, 0.2) !important; border-color: rgba(212, 160, 82, 0.5) !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+    const {
+      ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+      ResponsiveContainer, ReferenceLine, Legend,
+    } = Recharts;
+
+    // ══════════════════════════════════════════════════════════
+    // ─── SHARED HELPERS (copied from FIRE Suite) ───
+    // ══════════════════════════════════════════════════════════
+
+    const fmt = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      if (Math.abs(v) >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+      if (Math.abs(v) >= 1e3) return `$${(v / 1e3).toFixed(0)}k`;
+      return `$${Math.round(v).toLocaleString()}`;
+    };
+    const fmtFull = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      return `$${Math.round(v).toLocaleString()}`;
+    };
+
+    const useIsMobile = (breakpoint = 768) => {
+      const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint);
+      useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < breakpoint);
+        window.addEventListener("resize", handler);
+        return () => window.removeEventListener("resize", handler);
+      }, [breakpoint]);
+      return isMobile;
+    };
+
+    // ─── Theme (gold, matches FIRE Suite FIRE tab) ───
+    const T = {
+      accent: "#d4a052", accentLight: "#e8c88a",
+      accentDim: "rgba(212,160,82,0.3)", accentBg: "rgba(212,160,82,0.08)",
+      accentBorder: "rgba(212,160,82,0.2)",
+      green: "#6ecf8e", red: "#cf6e6e", teal: "#5eead4",
+      indigo: "#a5b4fc", purple: "#c4a0e8", blue: "#52a0d4", emerald: "#34d399",
+      text: "#e8eff8", textMid: "#8a9bb0", textDim: "#5a6b7d", textDark: "#4a5568",
+      panelBg: "rgba(255,255,255,0.02)", panelBorder: "rgba(255,255,255,0.06)",
+    };
+    const mono = { fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 };
+
+    // ─── Components ───
+    const SliderInput = ({ label, value, onChange, min, max, step, format, suffix, helpText }) => {
+      const [isEditing, setIsEditing] = useState(false);
+      const [editText, setEditText] = useState("");
+      const prefix = format === "currency" ? "$" : "";
+      const suffixStr = format === "percent" ? "%" : (suffix || "");
+      const displayVal = format === "currency" ? fmtFull(value)
+        : format === "percent" ? `${value}%` : `${value}${suffix || ""}`;
+      const handleStartEdit = () => { setEditText(String(value)); setIsEditing(true); };
+      const handleCommit = () => {
+        setIsEditing(false);
+        const parsed = parseFloat(editText);
+        if (!isNaN(parsed) && parsed >= 0) onChange(parsed);
+      };
+      const handleKeyDown = (e) => {
+        if (e.key === "Enter") handleCommit();
+        if (e.key === "Escape") setIsEditing(false);
+      };
+      return (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+            <label style={{ fontSize: 12, color: T.textMid, fontFamily: "'DM Sans', sans-serif", letterSpacing: "0.02em" }}>{label}</label>
+            {isEditing ? (
+              <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+                {prefix && <span style={{ fontSize: 13, color: T.textMid, ...mono }}>{prefix}</span>}
+                <input type="text" autoFocus value={editText}
+                  onChange={(e) => setEditText(e.target.value)} onBlur={handleCommit} onKeyDown={handleKeyDown}
+                  style={{
+                    width: Math.max(50, editText.length * 10 + 16), fontSize: 14, fontWeight: 600,
+                    color: T.text, ...mono,
+                    background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                    borderRadius: 4, padding: "1px 6px", outline: "none", textAlign: "right",
+                  }}
+                />
+                {suffixStr && <span style={{ fontSize: 13, color: T.textMid, ...mono }}>{suffixStr}</span>}
+              </div>
+            ) : (
+              <span onClick={handleStartEdit} title="Click to type a value"
+                style={{
+                  fontSize: 14, fontWeight: 600, color: T.text, ...mono,
+                  cursor: "text", padding: "1px 6px", borderRadius: 4,
+                  border: "1px solid transparent", transition: "border-color 0.15s, background 0.15s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.accentDim; e.currentTarget.style.background = T.accentBg; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.background = "transparent"; }}
+              >{displayVal}</span>
+            )}
+          </div>
+          <input type="range" min={min} max={max} step={step} value={value}
+            onChange={(e) => onChange(parseFloat(e.target.value))} style={{ width: "100%", accentColor: T.accent }}
+          />
+          {helpText && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2, fontStyle: "italic" }}>{helpText}</div>}
+        </div>
+      );
+    };
+
+    const SectionHeader = ({ children }) => (
+      <div style={{
+        fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em",
+        color: T.accent, marginBottom: 12, marginTop: 22, paddingBottom: 6,
+        borderBottom: `1px solid ${T.accentBorder}`, fontFamily: "'DM Sans', sans-serif",
+      }}>{children}</div>
+    );
+
+    const StatCard = ({ label, value, sub, color }) => (
+      <div className="ms-stat-card" style={{
+        background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+        borderRadius: 10, padding: "14px 16px", flex: 1, minWidth: 130,
+      }}>
+        <div style={{ fontSize: 10, color: "#6b7c90", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: color || T.text, ...mono }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>{sub}</div>}
+      </div>
+    );
+
+    const CustomTooltip = ({ active, payload, label }) => {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div style={{
+          background: "rgba(16,22,36,0.95)", border: `1px solid ${T.accentDim}`,
+          borderRadius: 8, padding: "10px 14px", fontFamily: "'DM Sans', sans-serif",
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.accent, marginBottom: 6 }}>Age {label}</div>
+          {payload.map((p, i) => (
+            <div key={i} style={{ fontSize: 12, color: p.color, marginBottom: 2, display: "flex", gap: 8 }}>
+              <span style={{ opacity: 0.7 }}>{p.name}:</span>
+              <span style={{ ...mono }}>{fmtFull(p.value)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    // ─── Australian Tax (2024-25) ───
+    const incomeTaxBrackets = [
+      { min: 0, max: 18200, rate: 0 },
+      { min: 18200, max: 45000, rate: 0.16 },
+      { min: 45000, max: 135000, rate: 0.30 },
+      { min: 135000, max: 190000, rate: 0.37 },
+      { min: 190000, max: Infinity, rate: 0.45 },
+    ];
+    function calcIncomeTax(taxableIncome) {
+      let tax = 0;
+      for (const b of incomeTaxBrackets) {
+        if (taxableIncome <= b.min) break;
+        tax += (Math.min(taxableIncome, b.max) - b.min) * b.rate;
+      }
+      return tax + taxableIncome * 0.02; // + Medicare
+    }
+
+    function calcYearContribs(salary, sg, voluntaryPerMonth, concessionalCap) {
+      const grossSG = salary * sg;
+      const grossVolRequested = voluntaryPerMonth * 12;
+      const roomForVoluntary = Math.max(0, concessionalCap - grossSG);
+      const grossVolActual = Math.min(grossVolRequested, roomForVoluntary);
+      const voluntaryRedirected = grossVolRequested - grossVolActual;
+      const sgExcess = Math.max(0, grossSG - concessionalCap);
+      const totalConcessional = Math.min(grossSG, concessionalCap) + grossVolActual;
+      const incPlusConcess = salary + totalConcessional;
+      let div293Tax = 0;
+      if (incPlusConcess > 250000) {
+        const div293Amount = Math.min(totalConcessional, incPlusConcess - 250000);
+        div293Tax = div293Amount * 0.15;
+      }
+      const netSuperContrib = Math.max(0, totalConcessional * 0.85 - div293Tax);
+      const totalRedirected = voluntaryRedirected + sgExcess;
+      const taxOnRedirected = totalRedirected > 0
+        ? calcIncomeTax(salary + totalRedirected) - calcIncomeTax(salary)
+        : 0;
+      const excessToOutside = Math.max(0, totalRedirected - taxOnRedirected);
+      const incomeTax = calcIncomeTax(salary + sgExcess);
+      const netSalary = salary - incomeTax;
+      return { netSuperContrib, excessToOutside, incomeTax, netSalary, totalConcessional, div293Tax, grossSG };
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── STORAGE (syncs with FIRE Suite FIRE tab) ───
+    // ══════════════════════════════════════════════════════════
+
+    const FIRE_STORAGE_KEY = "fire-calc-au-inputs"; // shared with FIRE Suite
+    const MS_STORAGE_KEY = "fire-milestones-au-inputs"; // milestone-specific
+
+    const FIRE_DEFAULTS = {
+      currentAge: 30, targetRetireAge: 55, preservationAge: 60,
+      superBalance: 80000, outsideBalance: 40000,
+      annualSalary: 120000, voluntarySuper: 0, monthlySaving: 2000,
+      returnRate: 7, inflationRate: 2.5, sgRate: 12, swr: 4,
+      superEarningsTax: 10, annualSpending: 50000, includeAgedPension: false,
+      salaryGrowthRate: 0, cgtDragRate: 0,
+    };
+    const MS_DEFAULTS = {
+      earlyCoastAge: 50,
+      coastJobIncome: 50000,
+      baristaIncome: 40000,
+    };
+
+    function loadFireInputs() {
+      try {
+        const raw = localStorage.getItem(FIRE_STORAGE_KEY);
+        if (raw) return { ...FIRE_DEFAULTS, ...JSON.parse(raw) };
+      } catch {}
+      return { ...FIRE_DEFAULTS };
+    }
+    function loadMsInputs() {
+      try {
+        const raw = localStorage.getItem(MS_STORAGE_KEY);
+        if (raw) return { ...MS_DEFAULTS, ...JSON.parse(raw) };
+      } catch {}
+      return { ...MS_DEFAULTS };
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── EXPORT ───
+    // ══════════════════════════════════════════════════════════
+
+    function exportToExcel(inputs, results) {
+      const wb = XLSX.utils.book_new();
+      const summary = [
+        ["FIRE Milestones \u2014 Australia", ""],
+        ["Generated", new Date().toLocaleDateString("en-AU")],
+        ["", ""],
+        ["INPUTS", "VALUE"],
+        ["Current Age", inputs.currentAge],
+        ["Target Retirement Age", inputs.targetRetireAge],
+        ["Early Coast Age", inputs.earlyCoastAge],
+        ["Preservation Age", inputs.preservationAge],
+        ["Super Balance", inputs.superBalance],
+        ["Outside-Super Balance", inputs.outsideBalance],
+        ["Annual Salary", inputs.annualSalary],
+        ["Voluntary Super (monthly)", inputs.voluntarySuper],
+        ["Monthly Saving", inputs.monthlySaving],
+        ["Annual Spending", inputs.annualSpending],
+        ["Coast Job Income (gross)", inputs.coastJobIncome],
+        ["Barista Income (gross)", inputs.baristaIncome],
+        ["Nominal Return (%)", inputs.returnRate],
+        ["Inflation (%)", inputs.inflationRate],
+        ["SG Rate (%)", inputs.sgRate],
+        ["Super Earnings Tax (%)", inputs.superEarningsTax],
+        ["SWR (%)", inputs.swr],
+        ["", ""],
+        ["MILESTONES", "STATUS / YEAR"],
+        ["Coast FIRE @ retirement age", results.coastRetire.label],
+        ["Coast FIRE @ early age", results.coastEarly.label],
+        ["Barista FIRE", results.barista.label],
+        ["Full FIRE", results.fullFire.label],
+        ["", ""],
+        ["FIRE NUMBER", results.fireNumber],
+      ];
+      const ws1 = XLSX.utils.aoa_to_sheet(summary);
+      ws1["!cols"] = [{ wch: 35 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(wb, ws1, "Summary");
+
+      const headers = ["Age", "Year", "Super", "Outside", "Total", "FIRE Number"];
+      const rows = results.projection.map(d => [d.age, d.year, d.super, d.outside, d.total, results.fireNumber]);
+      const ws2 = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      ws2["!cols"] = headers.map(() => ({ wch: 14 }));
+      for (let r = 1; r <= rows.length; r++) {
+        for (let c = 2; c <= 5; c++) {
+          const cell = XLSX.utils.encode_cell({ r, c });
+          if (ws2[cell]) ws2[cell].z = '"$"#,##0';
+        }
+      }
+      XLSX.utils.book_append_sheet(wb, ws2, "Projection");
+      XLSX.writeFile(wb, "FIRE_Milestones.xlsx");
+    }
+
+    function exportToCSV(results) {
+      const h = "Age,Year,Super,Outside,Total\n";
+      const r = results.projection.map(d => `${d.age},${d.year},${d.super},${d.outside},${d.total}`).join("\n");
+      const blob = new Blob([h + r], { type: "text/csv" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "FIRE_Milestones_Projection.csv";
+      a.click();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── MAIN COMPONENT ───
+    // ══════════════════════════════════════════════════════════
+
+    function FIREMilestones() {
+      const isMobile = useIsMobile();
+      const fireSaved = loadFireInputs();
+      const msSaved = loadMsInputs();
+
+      // Shared inputs (synced with FIRE Suite)
+      const [currentAge, setCurrentAge] = useState(fireSaved.currentAge);
+      const [targetRetireAge, setTargetRetireAge] = useState(fireSaved.targetRetireAge);
+      const [preservationAge, setPreservationAge] = useState(fireSaved.preservationAge);
+      const [superBalance, setSuperBalance] = useState(fireSaved.superBalance);
+      const [outsideBalance, setOutsideBalance] = useState(fireSaved.outsideBalance);
+      const [annualSalary, setAnnualSalary] = useState(fireSaved.annualSalary);
+      const [voluntarySuper, setVoluntarySuper] = useState(fireSaved.voluntarySuper);
+      const [monthlySaving, setMonthlySaving] = useState(fireSaved.monthlySaving);
+      const [annualSpending, setAnnualSpending] = useState(fireSaved.annualSpending);
+      const [returnRate, setReturnRate] = useState(fireSaved.returnRate);
+      const [inflationRate, setInflationRate] = useState(fireSaved.inflationRate);
+      const [sgRate, setSgRate] = useState(fireSaved.sgRate);
+      const [swr, setSwr] = useState(fireSaved.swr);
+      const [superEarningsTax, setSuperEarningsTax] = useState(fireSaved.superEarningsTax);
+
+      // Milestone-specific
+      const [earlyCoastAge, setEarlyCoastAge] = useState(msSaved.earlyCoastAge);
+      const [coastJobIncome, setCoastJobIncome] = useState(msSaved.coastJobIncome);
+      const [baristaIncome, setBaristaIncome] = useState(msSaved.baristaIncome);
+
+      // Persist shared inputs back to FIRE Suite key
+      const fireInputs = {
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving,
+        returnRate, inflationRate, sgRate, swr,
+        superEarningsTax, annualSpending,
+      };
+      const msInputs = { earlyCoastAge, coastJobIncome, baristaIncome };
+      const fireRef = useRef(fireInputs); fireRef.current = fireInputs;
+      const msRef = useRef(msInputs); msRef.current = msInputs;
+
+      useEffect(() => {
+        // merge into existing fire-calc-au-inputs (preserve any extra fields like includeAgedPension)
+        try {
+          const existing = JSON.parse(localStorage.getItem(FIRE_STORAGE_KEY) || "{}");
+          localStorage.setItem(FIRE_STORAGE_KEY, JSON.stringify({ ...existing, ...fireInputs }));
+        } catch {
+          localStorage.setItem(FIRE_STORAGE_KEY, JSON.stringify(fireInputs));
+        }
+        localStorage.setItem(MS_STORAGE_KEY, JSON.stringify(msInputs));
+      });
+
+      // ══════════════════════════════════════
+      // CALCULATION ENGINE
+      // ══════════════════════════════════════
+      const results = useMemo(() => computeAll({
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving, annualSpending,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax,
+        earlyCoastAge, coastJobIncome, baristaIncome,
+      }), [
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving, annualSpending,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax,
+        earlyCoastAge, coastJobIncome, baristaIncome,
+      ]);
+
+      const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
+
+      const currentYear = new Date().getFullYear();
+      const annualInvesting = monthlySaving * 12 + voluntarySuper * 12;
+
+      return (
+        <div style={{
+          minHeight: "100vh",
+          background: "linear-gradient(165deg, #0b1120 0%, #101624 40%, #141e30 100%)",
+          color: "#c8d5e2", fontFamily: "'DM Sans', sans-serif",
+          position: "relative", overflow: "hidden",
+        }}>
+          {/* Background gradients */}
+          <div style={{
+            position: "fixed", top: 0, left: 0, right: 0, bottom: 0, pointerEvents: "none", zIndex: 0,
+            background: "radial-gradient(ellipse at 20% 0%, rgba(212,160,82,0.04) 0%, transparent 60%), radial-gradient(ellipse at 80% 100%, rgba(76,140,120,0.03) 0%, transparent 50%)",
+          }} />
+
+          {/* Header */}
+          <div style={{ position: "relative", zIndex: 1, padding: isMobile ? "20px 16px 0" : "28px 32px 0", maxWidth: 1400, margin: "0 auto" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+              <h1 style={{
+                fontSize: isMobile ? 22 : 28, fontWeight: 800, margin: 0, letterSpacing: "-0.02em",
+                fontFamily: "'Playfair Display', serif",
+                background: `linear-gradient(135deg, ${T.accent}, ${T.accentLight})`,
+                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              }}>FIRE Milestones</h1>
+              <span style={{ fontSize: 13, color: T.textDim, fontWeight: 500, letterSpacing: "0.04em" }}>
+                AU Edition — Where Are You On The Path?
+              </span>
+              <div style={{ fontSize: 11, color: T.textDark, marginTop: 4 }}>
+                by Traiwit Chung &amp; Claude Code (Opus 4.6)
+              </div>
+            </div>
+            <p style={{ fontSize: 13, color: "#4a5b6d", margin: "6px 0 0", maxWidth: 720, lineHeight: 1.5 }}>
+              Your snapshot across 4 FIRE milestones, AU-aware. Each milestone properly accounts for super
+              being locked until preservation age, bridge fund needs for early retirement, and SG contributions
+              from coast/barista jobs. Inputs sync with FIRE Suite via localStorage.
+            </p>
+          </div>
+
+          {/* Main layout */}
+          <div style={{
+            position: "relative", zIndex: 1,
+            display: "flex", gap: 24, padding: isMobile ? "16px 16px 40px" : "20px 32px 40px",
+            maxWidth: 1400, margin: "0 auto",
+            flexDirection: isMobile ? "column" : "row", flexWrap: "wrap",
+          }}>
+            {/* ──── LEFT PANEL ──── */}
+            <div style={{
+              width: isMobile ? "100%" : 310, minWidth: isMobile ? 0 : 280, flexShrink: 0,
+              order: isMobile ? 2 : 0,
+              background: T.panelBg, border: "1px solid rgba(255,255,255,0.05)",
+              borderRadius: 14, padding: "4px 20px 24px",
+            }}>
+              <SectionHeader>Personal</SectionHeader>
+              <SliderInput label="Current Age" value={currentAge} onChange={setCurrentAge} min={18} max={65} step={1} suffix=" yrs" />
+              <SliderInput label="Target Retirement Age" value={targetRetireAge} onChange={setTargetRetireAge} min={Math.max(currentAge + 1, 30)} max={75} step={1} suffix=" yrs" helpText="Full FIRE target" />
+              <SliderInput label="Early Coast Age" value={earlyCoastAge} onChange={setEarlyCoastAge} min={Math.max(currentAge + 1, 30)} max={Math.max(currentAge + 1, 65)} step={1} suffix=" yrs" helpText="Stop investing AND retire early at this age" />
+              <SliderInput label="Preservation Age" value={preservationAge} onChange={setPreservationAge} min={55} max={65} step={1} suffix=" yrs" />
+
+              <SectionHeader>Balances</SectionHeader>
+              <SliderInput label="Super Balance" value={superBalance} onChange={setSuperBalance} min={0} max={2000000} step={5000} format="currency" />
+              <SliderInput label="Outside-Super" value={outsideBalance} onChange={setOutsideBalance} min={0} max={2000000} step={5000} format="currency" />
+
+              <SectionHeader>Income & Saving</SectionHeader>
+              <SliderInput label="Annual Salary (gross)" value={annualSalary} onChange={setAnnualSalary} min={0} max={400000} step={5000} format="currency" />
+              <SliderInput label="Voluntary Super (monthly)" value={voluntarySuper} onChange={setVoluntarySuper} min={0} max={5000} step={50} format="currency" />
+              <SliderInput label="Monthly Outside Saving" value={monthlySaving} onChange={setMonthlySaving} min={0} max={15000} step={100} format="currency" />
+
+              <SectionHeader>Spending</SectionHeader>
+              <SliderInput label="Annual Spending (today's $)" value={annualSpending} onChange={setAnnualSpending} min={20000} max={200000} step={1000} format="currency" />
+
+              <SectionHeader>Coast Phase Job</SectionHeader>
+              <SliderInput label="Coast Job Income (gross)" value={coastJobIncome} onChange={setCoastJobIncome} min={0} max={200000} step={2000} format="currency"
+                helpText="During Coast FIRE you cover expenses with this. Its SG contributions still flow into super." />
+
+              <SectionHeader>Barista FIRE</SectionHeader>
+              <SliderInput label="Barista Income (gross)" value={baristaIncome} onChange={setBaristaIncome} min={0} max={150000} step={2000} format="currency"
+                helpText="Part-time income that offsets some spending — portfolio fills the gap." />
+
+              <SectionHeader>Assumptions</SectionHeader>
+              <SliderInput label="Nominal Return" value={returnRate} onChange={setReturnRate} min={3} max={12} step={0.5} format="percent" />
+              <SliderInput label="Inflation" value={inflationRate} onChange={setInflationRate} min={1} max={6} step={0.5} format="percent" />
+              <SliderInput label="SG Rate" value={sgRate} onChange={setSgRate} min={9} max={15} step={0.5} format="percent" />
+              <SliderInput label="Super Earnings Tax" value={superEarningsTax} onChange={setSuperEarningsTax} min={0} max={30} step={1} format="percent" />
+              <SliderInput label="Safe Withdrawal Rate" value={swr} onChange={setSwr} min={2.5} max={6} step={0.25} format="percent" />
+
+              <div style={{
+                marginTop: 20, padding: "10px 12px", borderRadius: 8,
+                background: T.accentBg, border: `1px solid ${T.accentBorder}`,
+                fontSize: 11, color: T.textMid, lineHeight: 1.5,
+              }}>
+                <strong style={{ color: T.accent }}>Synced with FIRE Suite.</strong><br/>
+                Edits here update FIRE Suite's inputs (and vice-versa) via localStorage.
+              </div>
+            </div>
+
+            {/* ──── RIGHT PANEL ──── */}
+            <div style={{ flex: 1, minWidth: 0, order: isMobile ? 1 : 0 }}>
+
+              {/* Current Snapshot */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid, marginBottom: 10 }}>
+                  Current Snapshot
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <StatCard label="Portfolio (invested)" value={fmt(superBalance + outsideBalance)} sub="super + outside" color={T.text} />
+                  <StatCard label="Annual Spending" value={fmt(annualSpending)} sub={`${swr}% SWR target`} color={T.purple} />
+                  <StatCard label="Annual Investing" value={fmt(annualInvesting)} sub="contributions/yr" color={T.teal} />
+                  <StatCard label="Current Age" value={currentAge} sub={`target retire ${targetRetireAge}`} color={T.indigo} />
+                </div>
+              </div>
+
+              {/* FIRE Milestones */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid, marginBottom: 10 }}>
+                  FIRE Milestones
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 12 }}>
+                  <MilestoneCard milestone={results.coastRetire} pillBg={`${T.green}15`} pillBorder={`${T.green}40`} pillColor={T.green} currentYear={currentYear} currentAge={currentAge} />
+                  <MilestoneCard milestone={results.coastEarly} pillBg={`${T.green}15`} pillBorder={`${T.green}40`} pillColor={T.green} currentYear={currentYear} currentAge={currentAge} />
+                  <MilestoneCard milestone={results.barista} pillBg={`${T.accent}15`} pillBorder={`${T.accent}40`} pillColor={T.accent} currentYear={currentYear} currentAge={currentAge} />
+                  <MilestoneCard milestone={results.fullFire} pillBg={`${T.indigo}15`} pillBorder={`${T.indigo}40`} pillColor={T.indigo} currentYear={currentYear} currentAge={currentAge} />
+                </div>
+              </div>
+
+              {/* Full FIRE details strip */}
+              <div style={{
+                background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+                borderRadius: 12, padding: "16px 20px", marginBottom: 20,
+              }}>
+                <div style={{
+                  display: "inline-block", padding: "3px 10px", borderRadius: 12,
+                  background: `${T.indigo}15`, border: `1px solid ${T.indigo}40`,
+                  color: T.indigo, fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", marginBottom: 12,
+                }}>FULL FIRE DETAILS</div>
+                <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginBottom: 2 }}>Target year</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: T.indigo, ...mono }}>
+                      {results.fullFire.atAge != null ? currentYear + (results.fullFire.atAge - currentAge) : "—"}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
+                      {results.fullFire.atAge != null
+                        ? `Age ${results.fullFire.atAge} · ${results.fullFire.yearsAway} years away`
+                        : "Not reached by 100"}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginBottom: 2 }}>FIRE number (today's $)</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: T.accent, ...mono }}>
+                      {fmt(results.fireNumber)}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
+                      {fmt(annualSpending)}/yr × {Math.round(100 / swr)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginBottom: 2 }}>Projected portfolio at FIRE</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: T.green, ...mono }}>
+                      {results.fullFire.atAge != null ? fmt(results.fullFire.projectedPortfolio) : "—"}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
+                      starting from {fmt(superBalance + outsideBalance)} today
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Portfolio Growth Projection */}
+              <div style={{
+                background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+                borderRadius: 12, padding: "20px 12px 12px 0",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingLeft: 20, paddingRight: 16, marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
+                    Portfolio Growth Projection
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, color: T.textDim }}>Show to age</span>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {[
+                        { label: String(Math.min(targetRetireAge, 65)), val: Math.min(targetRetireAge, 65) },
+                        { label: "65", val: 65 },
+                        { label: "75", val: 75 },
+                        { label: "90", val: 90 },
+                      ].filter((b, i, arr) => arr.findIndex(a => a.val === b.val) === i) // dedupe
+                       .sort((a, b) => a.val - b.val)
+                       .map(btn => (
+                        <button key={btn.val} onClick={() => setChartEndAge(btn.val)}
+                          style={{
+                            padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                            background: chartEndAge === btn.val ? T.accentBg : "transparent",
+                            border: `1px solid ${chartEndAge === btn.val ? T.accentDim : "rgba(255,255,255,0.08)"}`,
+                            color: chartEndAge === btn.val ? T.accent : T.textDim,
+                            fontSize: 11, fontWeight: 600, ...mono,
+                            transition: "all 0.15s",
+                          }}>{btn.label}</button>
+                      ))}
+                    </div>
+                    <input type="range" min={currentAge + 5} max={90} step={1} value={chartEndAge}
+                      onChange={(e) => setChartEndAge(parseInt(e.target.value))}
+                      style={{ width: 80, accentColor: T.accent, height: 4 }}
+                    />
+                    <span style={{ fontSize: 11, color: T.accent, ...mono, minWidth: 20 }}>{chartEndAge}</span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={isMobile ? 320 : 460}>
+                  <ComposedChart data={results.projection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
+                    <defs>
+                      <linearGradient id="msSuperGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#818cf8" stopOpacity={0.6} />
+                        <stop offset="95%" stopColor="#818cf8" stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="msOutsideGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.6} />
+                        <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                    <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} />
+                    <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} width={70} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Area type="monotone" dataKey="outside" stackId="nw" stroke="#2dd4bf" fill="url(#msOutsideGrad)" strokeWidth={1.5} name="Outside-Super" />
+                    <Area type="monotone" dataKey="super" stackId="nw" stroke="#818cf8" fill="url(#msSuperGrad)" strokeWidth={1.5} name="Super" />
+                    <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false} name="Total Portfolio" />
+                    {/* Horizontal milestone lines */}
+                    <ReferenceLine y={results.fireNumber} stroke={T.accent} strokeDasharray="6 4" strokeOpacity={0.7}
+                      label={{ value: `FIRE: ${fmt(results.fireNumber)}`, fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
+                    <ReferenceLine y={results.barista.requiredPortfolio} stroke={T.accent} strokeDasharray="3 3" strokeOpacity={0.5}
+                      label={{ value: `Barista: ${fmt(results.barista.requiredPortfolio)}`, fill: T.accent, fontSize: 10, position: "right" }} />
+                    {/* Vertical milestone lines */}
+                    {results.coastRetire.atAge != null && results.coastRetire.atAge < 100 && (
+                      <ReferenceLine x={results.coastRetire.atAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.5}
+                        label={{ value: `Coast ${targetRetireAge}`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {results.coastEarly.atAge != null && results.coastEarly.atAge < 100 && results.coastEarly.atAge !== results.coastRetire.atAge && (
+                      <ReferenceLine x={results.coastEarly.atAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.4}
+                        label={{ value: `Coast ${earlyCoastAge}`, position: "insideTopRight", fill: T.green, fontSize: 10, dy: 26 }} />
+                    )}
+                    {results.fullFire.atAge != null && results.fullFire.atAge < 100 && (
+                      <ReferenceLine x={results.fullFire.atAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: `Full FIRE`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 40 }} />
+                    )}
+                    <ReferenceLine x={preservationAge} stroke={T.textMid} strokeDasharray="2 4" strokeOpacity={0.3}
+                      label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: 54 }} />
+                    <Legend verticalAlign="top" height={36}
+                      formatter={(val) => <span style={{ color: T.textMid, fontSize: 11 }}>{val}</span>} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Export buttons */}
+              <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+                <button className="ms-export-btn" onClick={() => exportToExcel({ ...fireInputs, ...msInputs }, results)}
+                  style={{
+                    padding: "9px 20px", borderRadius: 8, cursor: "pointer",
+                    background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                    color: T.accent, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+                  }}>Export to Excel</button>
+                <button className="ms-export-btn" onClick={() => exportToCSV(results)}
+                  style={{
+                    padding: "9px 20px", borderRadius: 8, cursor: "pointer",
+                    background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                    color: T.accent, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+                  }}>Download CSV</button>
+              </div>
+
+              {/* Assumptions footer */}
+              <div style={{
+                marginTop: 16, padding: "12px 16px", borderRadius: 8,
+                background: "rgba(255,255,255,0.015)", border: `1px solid ${T.panelBorder}`,
+                fontSize: 11, color: T.textDim, lineHeight: 1.7,
+              }}>
+                <strong style={{ color: T.textMid }}>Assumptions:</strong>{" "}
+                Spending {fmt(annualSpending)}/yr (today's $) ·
+                Contributions {fmt(annualInvesting)}/yr ·
+                Return {returnRate}% nominal ({results.realRetOut.toFixed(2)}% real outside, {results.realRetSuper.toFixed(2)}% real super) ·
+                Inflation {inflationRate}% ·
+                Starting portfolio {fmt(superBalance + outsideBalance)} ·
+                FIRE number = spending ÷ {swr}% SWR ·
+                Coast FIRE uses portfolio + ongoing SG only (no voluntary contributions) ·
+                Bridge fund covers age {earlyCoastAge}–{preservationAge} for early Coast FIRE ·
+                All figures in today's dollars · Projections are estimates, not guarantees.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── MILESTONE CARD COMPONENT ───
+    // ══════════════════════════════════════════════════════════
+    function MilestoneCard({ milestone, pillBg, pillBorder, pillColor, currentYear, currentAge }) {
+      const m = milestone;
+      const isReady = m.atAge != null && m.atAge <= currentAge;
+      const isFuture = m.atAge != null && m.atAge > currentAge;
+      const isNever = m.atAge == null;
+
+      return (
+        <div className="ms-card" style={{
+          background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+          borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column",
+        }}>
+          <div style={{
+            display: "inline-block", padding: "3px 10px", borderRadius: 12,
+            background: pillBg, border: `1px solid ${pillBorder}`,
+            color: pillColor, fontSize: 10, fontWeight: 700, letterSpacing: "0.05em",
+            alignSelf: "flex-start", marginBottom: 10,
+          }}>{m.pillLabel}</div>
+
+          <div style={{ fontSize: 13, color: T.textMid, marginBottom: 8, lineHeight: 1.4 }}>
+            {m.subtitle}
+          </div>
+
+          {isReady && (
+            <>
+              <div style={{ fontSize: 24, fontWeight: 800, color: T.green, ...mono, lineHeight: 1.1 }}>
+                Already <br/>there ✓
+              </div>
+              <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
+                Age {currentAge} · {currentYear}
+              </div>
+            </>
+          )}
+          {isFuture && (
+            <>
+              <div style={{ fontSize: 26, fontWeight: 800, color: pillColor, ...mono, lineHeight: 1.1 }}>
+                ~{currentYear + (m.atAge - currentAge)}
+              </div>
+              <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
+                Age ~{m.atAge} · {m.atAge - currentAge} years away
+              </div>
+            </>
+          )}
+          {isNever && (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 800, color: T.red, ...mono, lineHeight: 1.1 }}>
+                Not reached
+              </div>
+              <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
+                by age 100 with current plan
+              </div>
+            </>
+          )}
+
+          <div style={{ fontSize: 11, color: T.textDim, marginTop: 12, lineHeight: 1.5 }}>
+            {m.explanation}
+          </div>
+        </div>
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── CALCULATION ENGINE (pure function) ───
+    // ══════════════════════════════════════════════════════════
+    function computeAll(opts) {
+      const {
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving, annualSpending,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax,
+        earlyCoastAge, coastJobIncome, baristaIncome,
+      } = opts;
+
+      const nomRet = returnRate / 100;
+      const infl = inflationRate / 100;
+      const sg = sgRate / 100;
+      const swrDec = swr / 100;
+      const sTax = superEarningsTax / 100;
+      const cap = 30000;
+
+      const realRetOut = (1 + nomRet) / (1 + infl) - 1;
+      const realRetSuper = (1 + nomRet * (1 - sTax)) / (1 + infl) - 1;
+      const realRetSuperPension = (1 + nomRet) / (1 + infl) - 1;
+      const annualOutsideSaving = monthlySaving * 12;
+      const fireNumber = annualSpending / swrDec;
+
+      // ─── Bridge fund (PV annuity) ───
+      const bridgePV = (yrs, annualGap) => {
+        if (yrs <= 0 || annualGap <= 0) return 0;
+        if (realRetOut <= 0) return annualGap * yrs;
+        return annualGap * (1 - Math.pow(1 + realRetOut, -yrs)) / realRetOut;
+      };
+
+      // ─── Coast job analysis (used by canCoastAt) ───
+      // During the coast phase you work a job that covers expenses. The SG from
+      // that job continues flowing into super (employer pays it regardless).
+      // If the coast job doesn't fully cover spending, the gap is drawn from outside.
+      // If it over-covers, the surplus is NOT added to outside (this is "coasting",
+      // not aggressive saving — that would defeat the purpose).
+      const coastJobContribs = calcYearContribs(coastJobIncome, sg, 0, cap);
+      const coastJobNetIncome = coastJobContribs.netSalary;
+      const coastJobNetSuper = coastJobContribs.netSuperContrib;
+      const coastJobGap = Math.max(0, annualSpending - coastJobNetIncome);
+
+      // ─── canCoastAt: at age A with sNow/oNow, can I stop investing
+      //    AND retire at retireAge funding annualSpending? ───
+      // Coast phase (age → retireAge): no voluntary saving. Coast job SG flows
+      // into super each year. Outside-super covers any shortfall vs spending.
+      // Retirement phase (retireAge → preservationAge): outside-super funds the
+      // bridge (full annualSpending). Combined assets at preservation must yield
+      // enough to support spending for life.
+      const canCoastAt = (age, sNow, oNow, retireAge) => {
+        const yrsToRetire = Math.max(0, retireAge - age);
+
+        // Project balances through the COAST PHASE (age → retireAge)
+        // Super grows at realRetSuper and receives coastJobNetSuper each year.
+        // FV with annuity: sNow*(1+r)^n + sgFV*((1+r)^n - 1)/r
+        let sAtRet, oAtRet;
+        if (yrsToRetire === 0) {
+          sAtRet = sNow;
+          oAtRet = oNow;
+        } else {
+          const fvSup = Math.pow(1 + realRetSuper, yrsToRetire);
+          const sgFV = realRetSuper !== 0
+            ? coastJobNetSuper * (fvSup - 1) / realRetSuper
+            : coastJobNetSuper * yrsToRetire;
+          sAtRet = sNow * fvSup + sgFV;
+          // Outside: drawdown coastJobGap each year (annuity in reverse)
+          // FV: oNow*(1+r)^n - gap * ((1+r)^n - 1)/r
+          const fvOut = Math.pow(1 + realRetOut, yrsToRetire);
+          const gapFV = realRetOut !== 0
+            ? coastJobGap * (fvOut - 1) / realRetOut
+            : coastJobGap * yrsToRetire;
+          oAtRet = oNow * fvOut - gapFV;
+          if (oAtRet < 0) return false; // ran out during coast
+        }
+
+        if (retireAge >= preservationAge) {
+          return (sAtRet + oAtRet) >= fireNumber;
+        }
+        // Pre-preservation retirement: bridge from outside, combined at pres >= fireNumber
+        const yrsRetToPres = preservationAge - retireAge;
+        const bridge = bridgePV(yrsRetToPres, annualSpending);
+        if (oAtRet < bridge) return false;
+        const oLeftover = oAtRet - bridge;
+        const sAtPres = sAtRet * Math.pow(1 + realRetSuper, yrsRetToPres);
+        const oLeftoverAtPres = oLeftover * Math.pow(1 + realRetOut, yrsRetToPres);
+        return (sAtPres + oLeftoverAtPres) >= fireNumber;
+      };
+
+      // ─── Find Coast FIRE age (with given retireAge target) ───
+      const findCoastAge = (retireAge) => {
+        let sS = superBalance, sO = outsideBalance;
+        for (let age = currentAge; age <= 100; age++) {
+          if (age > retireAge) return null;
+          if (canCoastAt(age, sS, sO, retireAge)) return age;
+          // Save another year (full saving phase, NOT coasting yet)
+          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          sS = sS * (1 + realRetSuper) + c.netSuperContrib;
+          sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        return null;
+      };
+
+      // ─── Find Barista FIRE age ───
+      // At barista point, you switch to part-time work (baristaIncome). The barista job
+      // pays SG into super. You stop voluntary contributions and stop monthlySaving.
+      // The portfolio + barista net income must sustain your lifestyle indefinitely.
+      // Specifically: (portfolio × SWR) + baristaNetIncome >= annualSpending
+      // BUT we also need to pass the AU bridge check: outside must cover the gap
+      // between baristaNetIncome and annualSpending until preservation.
+      const baristaNetIncome = baristaIncome - calcIncomeTax(baristaIncome);
+      const baristaSpendingGap = Math.max(0, annualSpending - baristaNetIncome);
+      const baristaSGContrib = calcYearContribs(baristaIncome, sg, 0, cap);
+
+      const canBaristaAt = (age, sNow, oNow) => {
+        // Required portfolio: (annualSpending - baristaNetIncome) / SWR
+        // i.e., portfolio yields enough at SWR to fill the spending gap
+        if (baristaSpendingGap === 0) {
+          // Barista job covers everything by itself (after super accumulation)
+          // Still need bridge fund check if barista is meant as full retirement income
+          return true;
+        }
+        const requiredPortfolio = baristaSpendingGap / swrDec;
+
+        // AU bridge check: we need to actually be able to use the portfolio NOW
+        // even if much of it is in super.
+        // - If age >= preservationAge: super accessible, just need total >= required
+        // - If age < preservationAge: outside must cover bridge of (baristaSpendingGap × bridge years)
+        //   AND combined assets at preservation must yield enough at SWR
+        if (age >= preservationAge) {
+          return (sNow + oNow) >= requiredPortfolio;
+        }
+        const bridgeYrs = preservationAge - age;
+        const bridge = bridgePV(bridgeYrs, baristaSpendingGap);
+        if (oNow < bridge) return false;
+        // After bridge, leftover outside + super (which received SG during barista years) at preservation
+        const oLeftover = oNow - bridge;
+        // Project super forward with barista-job SG contributions over the bridge period
+        const r = realRetSuper;
+        const fv = Math.pow(1 + r, bridgeYrs);
+        const sgFV = r !== 0 ? baristaSGContrib.netSuperContrib * (fv - 1) / r : baristaSGContrib.netSuperContrib * bridgeYrs;
+        const sAtPres = sNow * fv + sgFV;
+        const oLeftoverAtPres = oLeftover * Math.pow(1 + realRetOut, bridgeYrs);
+        return (sAtPres + oLeftoverAtPres) >= requiredPortfolio;
+      };
+
+      const findBaristaAge = () => {
+        let sS = superBalance, sO = outsideBalance;
+        for (let age = currentAge; age <= 100; age++) {
+          if (canBaristaAt(age, sS, sO)) return age;
+          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          sS = sS * (1 + realRetSuper) + c.netSuperContrib;
+          sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        return null;
+      };
+
+      // ─── Find Full FIRE age (regular FIRE with same logic as FIRE Suite) ───
+      const findFullFireAge = () => {
+        let sS = superBalance, sO = outsideBalance;
+        for (let age = currentAge; age <= 100; age++) {
+          if (age >= preservationAge) {
+            if (sS + sO >= fireNumber) return age;
+          } else {
+            const yrsToP = preservationAge - age;
+            const bridge = bridgePV(yrsToP, annualSpending);
+            if (sO >= bridge) {
+              const sAP = sS * Math.pow(1 + realRetSuper, yrsToP);
+              const oAP = (sO - bridge) * Math.pow(1 + realRetOut, yrsToP);
+              if (sAP + oAP >= fireNumber) return age;
+            }
+          }
+          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          sS = sS * (1 + realRetSuper) + c.netSuperContrib;
+          sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        return null;
+      };
+
+      // ─── Compute milestones ───
+      const coastRetireAge = findCoastAge(targetRetireAge);
+      const coastEarlyAge = findCoastAge(earlyCoastAge);
+      const baristaAge = findBaristaAge();
+      const fullFireAge = findFullFireAge();
+
+      // ─── Projection (year-by-year for chart) ───
+      const projection = [];
+      const currentYear = new Date().getFullYear();
+      let pSuper = superBalance, pOutside = outsideBalance;
+      const maxAge = Math.min(100, currentAge + 60);
+      for (let age = currentAge; age <= maxAge; age++) {
+        projection.push({
+          age,
+          year: currentYear + (age - currentAge),
+          super: Math.round(pSuper),
+          outside: Math.round(pOutside),
+          total: Math.round(pSuper + pOutside),
+        });
+        if (age < maxAge) {
+          if (age < targetRetireAge) {
+            const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+            pSuper = pSuper * (1 + realRetSuper) + c.netSuperContrib;
+            pOutside = pOutside * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+          } else if (age < preservationAge) {
+            // Retired, pre-preservation: drawdown from outside
+            pSuper = pSuper * (1 + realRetSuper);
+            pOutside = Math.max(0, pOutside * (1 + realRetOut) - annualSpending);
+          } else {
+            // Post-preservation: drawdown from super (pension phase, tax-free)
+            pSuper = Math.max(0, pSuper * (1 + realRetSuperPension) - annualSpending);
+            pOutside = pOutside * (1 + realRetOut);
+          }
+        }
+      }
+
+      // Projected portfolio at full FIRE age (from projection)
+      let fullFireProjected = 0;
+      if (fullFireAge != null) {
+        const e = projection.find(d => d.age === fullFireAge);
+        if (e) fullFireProjected = e.total;
+      }
+
+      // ─── Build milestone display objects ───
+      const buildMilestone = ({ pillLabel, subtitle, atAge, requiredPortfolio, explanation, projectedPortfolio }) => ({
+        pillLabel, subtitle, atAge,
+        yearsAway: atAge != null ? atAge - currentAge : null,
+        label: atAge == null ? "Not reached" : (atAge <= currentAge ? "Already there" : `Age ${atAge} · ${currentYear + (atAge - currentAge)}`),
+        requiredPortfolio: requiredPortfolio || 0,
+        projectedPortfolio: projectedPortfolio || 0,
+        explanation,
+      });
+
+      // For each Coast milestone, compute "required portfolio at coast point"
+      // = the minimum total needed at the coast age to satisfy canCoastAt
+      const requiredPortfolioForCoast = (retireAge, age) => {
+        // Solve: a portfolio with current super:outside ratio that just satisfies canCoastAt
+        // For display only — use total assets at the coast age
+        const sumNow = superBalance + outsideBalance;
+        if (sumNow === 0) return null;
+        // Use the projection to find total at coast age
+        const e = projection.find(d => d.age === age);
+        return e ? e.total : null;
+      };
+
+      const coastRetireRequired = coastRetireAge != null ? requiredPortfolioForCoast(targetRetireAge, coastRetireAge) : null;
+      const coastEarlyRequired = coastEarlyAge != null ? requiredPortfolioForCoast(earlyCoastAge, coastEarlyAge) : null;
+      const baristaRequired = baristaSpendingGap > 0 ? baristaSpendingGap / swrDec : 0;
+
+      const coastJobNote = coastJobGap > 0
+        ? `Coast job ${fmt(coastJobIncome)} (gross) leaves a ${fmt(coastJobGap)}/yr shortfall drawn from outside-super. SG ${fmt(coastJobNetSuper)}/yr still flows to super.`
+        : `Coast job ${fmt(coastJobIncome)} (gross) covers your spending. SG ${fmt(coastJobNetSuper)}/yr still flows to super.`;
+
+      const coastRetire = buildMilestone({
+        pillLabel: `Coast FIRE · ${targetRetireAge}`,
+        subtitle: `Stop investing, retire at ${targetRetireAge}`,
+        atAge: coastRetireAge,
+        requiredPortfolio: coastRetireRequired,
+        explanation: coastRetireAge == null
+          ? `Current portfolio + saving doesn't reach the coast threshold by age 100. Try increasing return assumptions, reducing spending, or using a higher coast job income.`
+          : coastRetireAge <= currentAge
+            ? `Already coasting. ${coastJobNote}`
+            : `By age ${coastRetireAge}, your portfolio reaches ${fmt(coastRetireRequired || 0)}. ${coastJobNote}`,
+      });
+
+      const coastEarly = buildMilestone({
+        pillLabel: `Coast FIRE · ${earlyCoastAge}`,
+        subtitle: `Stop investing, retire early at ${earlyCoastAge}`,
+        atAge: coastEarlyAge,
+        requiredPortfolio: coastEarlyRequired,
+        explanation: coastEarlyAge == null
+          ? `Coasting AND retiring at ${earlyCoastAge} requires more outside-super (for the bridge to age ${preservationAge}) than your plan delivers.`
+          : coastEarlyAge <= currentAge
+            ? `Already coasting. Outside-super covers age ${earlyCoastAge}–${preservationAge} bridge, super compounds. ${coastJobNote}`
+            : `By ${coastEarlyAge}, portfolio reaches ${fmt(coastEarlyRequired || 0)}. Bridge covers age ${earlyCoastAge}–${preservationAge}, then super takes over. ${coastJobNote}`,
+      });
+
+      const barista = buildMilestone({
+        pillLabel: "Barista FIRE",
+        subtitle: `Part-time work (~${fmt(baristaIncome)}/yr gross) plus portfolio`,
+        atAge: baristaAge,
+        requiredPortfolio: baristaRequired,
+        explanation: baristaSpendingGap === 0
+          ? `Barista net income (${fmt(baristaNetIncome)}) already covers your full spending. Any portfolio gives you full Barista FIRE — you just need bridge fund to preservation age.`
+          : baristaAge == null
+            ? `Portfolio never reaches ${fmt(baristaRequired)} (the amount needed to fill the ${fmt(baristaSpendingGap)} spending gap at ${swr}% SWR).`
+            : baristaAge <= currentAge
+              ? `Portfolio yields ~${fmt(baristaSpendingGap)}/yr at ${swr}% SWR — exactly the gap between your spending and barista net income (${fmt(baristaNetIncome)}).`
+              : `By age ${baristaAge}, portfolio reaches ${fmt(baristaRequired)}. Barista job covers ${fmt(baristaNetIncome)}, portfolio fills the rest.`,
+      });
+
+      const fullFire = buildMilestone({
+        pillLabel: "Full FIRE",
+        subtitle: "Never work again",
+        atAge: fullFireAge,
+        requiredPortfolio: fireNumber,
+        projectedPortfolio: fullFireProjected,
+        explanation: fullFireAge == null
+          ? `Full FIRE not reached by 100. Increase saving, reduce spending, or revise return assumptions.`
+          : fullFireAge <= currentAge
+            ? `${fmt(superBalance + outsideBalance)} already exceeds inflation-adjusted FIRE number of ${fmt(fireNumber)}.`
+            : `Portfolio reaches ${fmt(fullFireProjected)} by age ${fullFireAge}, exceeding inflation-adjusted FIRE number of ${fmt(fireNumber)}.`,
+      });
+
+      return {
+        fireNumber,
+        realRetOut: realRetOut * 100,
+        realRetSuper: realRetSuper * 100,
+        coastRetire, coastEarly, barista, fullFire,
+        projection,
+      };
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<FIREMilestones />);
+  </script>
+
+  <!-- ── PWA: floating backup/restore + service-worker registration ── -->
+  <style>
+    .pwa-fab-wrap {
+      position: fixed; z-index: 9999; font-family: 'DM Sans', system-ui, sans-serif; display: flex; gap: 6px;
+      bottom: max(16px, env(safe-area-inset-bottom, 0px) + 12px);
+      right:  max(16px, env(safe-area-inset-right, 0px) + 12px);
+    }
+    .pwa-fab {
+      padding: 8px 12px; border-radius: 999px;
+      background: rgba(11, 17, 32, 0.88);
+      color: #d4a052;
+      border: 1px solid rgba(212, 160, 82, 0.45);
+      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+      cursor: pointer;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      transition: .15s; box-shadow: 0 4px 14px rgba(0,0,0,.4);
+    }
+    .pwa-fab:hover { background: rgba(212,160,82,0.18); color: #fbbf24; }
+    .pwa-fab:active { transform: scale(0.95); }
+  </style>
+  <div class="pwa-fab-wrap">
+    <button class="pwa-fab" onclick="pwaExport()" title="Download all FIRE data as JSON">⤓ Backup</button>
+    <button class="pwa-fab" onclick="document.getElementById('pwa-restore-file').click()" title="Restore from JSON">⤒ Restore</button>
+    <input id="pwa-restore-file" type="file" accept="application/json" style="display:none" onchange="pwaImport(event)" />
+  </div>
+  <script>
+  (function(){
+    window.pwaExport = function(){
+      var dump = { _meta: { app: 'fire-au', exportedAt: new Date().toISOString() } };
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i), v = localStorage.getItem(k);
+        try { v = JSON.parse(v); } catch (_) {}
+        dump[k] = v;
+      }
+      var blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'fire-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    window.pwaImport = function(e){
+      var f = e.target.files[0]; if (!f) return;
+      if (!confirm('Restore will overwrite your current FIRE data with the backup. Continue?')) return;
+      var r = new FileReader();
+      r.onload = function(){
+        try {
+          var parsed = JSON.parse(r.result);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('shape');
+          Object.keys(parsed).forEach(function(k){
+            if (k.charAt(0) === '_') return;
+            var v = parsed[k];
+            localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+          });
+          location.reload();
+        } catch (err) { alert('That file does not look like a valid backup.'); }
+      };
+      r.readAsText(f);
+    };
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function(){
+        navigator.serviceWorker.register('./sw.js').catch(function(err){
+          console.warn('SW registration failed:', err);
+        });
+      });
+    }
+  })();
+  </script>
+</body>
+</html>
