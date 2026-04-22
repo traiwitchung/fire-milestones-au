@@ -1144,12 +1144,13 @@
       };
       r.readAsText(f);
     };
+    // Service worker registration TEMPORARILY disabled while we recover from a
+    // broken SW cache. sw.js is a kill-switch that removes itself on activation.
+    // Will re-enable once confirmed the PWA renders cleanly again.
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', function(){
-        navigator.serviceWorker.register('./sw.js').catch(function(err){
-          console.warn('SW registration failed:', err);
-        });
-      });
+      navigator.serviceWorker.getRegistrations().then(function(regs){
+        for (var i = 0; i < regs.length; i++) { regs[i].unregister(); }
+      }).catch(function(){});
     }
   })();
   </script>
