@@ -259,7 +259,6 @@
       salaryGrowthRate: 0, cgtDragRate: 0,
     };
     const MS_DEFAULTS = {
-      earlyCoastAge: 50,
       coastJobIncome: 50000,
       baristaIncome: 40000,
     };
@@ -292,7 +291,6 @@
         ["INPUTS", "VALUE"],
         ["Current Age", inputs.currentAge],
         ["Target Retirement Age", inputs.targetRetireAge],
-        ["Early Coast Age", inputs.earlyCoastAge],
         ["Preservation Age", inputs.preservationAge],
         ["Super Balance", inputs.superBalance],
         ["Outside-Super Balance", inputs.outsideBalance],
@@ -310,7 +308,6 @@
         ["", ""],
         ["MILESTONES", "STATUS / YEAR"],
         ["Coast FIRE @ retirement age", results.coastRetire.label],
-        ["Coast FIRE @ early age", results.coastEarly.label],
         ["Barista FIRE", results.barista.label],
         ["Full FIRE", results.fullFire.label],
         ["", ""],
@@ -370,7 +367,6 @@
       const [superEarningsTax, setSuperEarningsTax] = useState(fireSaved.superEarningsTax);
 
       // Milestone-specific
-      const [earlyCoastAge, setEarlyCoastAge] = useState(msSaved.earlyCoastAge);
       const [coastJobIncome, setCoastJobIncome] = useState(msSaved.coastJobIncome);
       const [baristaIncome, setBaristaIncome] = useState(msSaved.baristaIncome);
 
@@ -382,7 +378,7 @@
         returnRate, inflationRate, sgRate, swr,
         superEarningsTax, annualSpending,
       };
-      const msInputs = { earlyCoastAge, coastJobIncome, baristaIncome };
+      const msInputs = { coastJobIncome, baristaIncome };
       const fireRef = useRef(fireInputs); fireRef.current = fireInputs;
       const msRef = useRef(msInputs); msRef.current = msInputs;
 
@@ -405,13 +401,13 @@
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        earlyCoastAge, coastJobIncome, baristaIncome,
+        coastJobIncome, baristaIncome,
       }), [
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        earlyCoastAge, coastJobIncome, baristaIncome,
+        coastJobIncome, baristaIncome,
       ]);
 
       const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
@@ -472,7 +468,6 @@
               <SectionHeader>Personal</SectionHeader>
               <SliderInput label="Current Age" value={currentAge} onChange={setCurrentAge} min={18} max={65} step={1} suffix=" yrs" />
               <SliderInput label="Target Retirement Age" value={targetRetireAge} onChange={setTargetRetireAge} min={Math.max(currentAge + 1, 30)} max={75} step={1} suffix=" yrs" helpText="Full FIRE target" />
-              <SliderInput label="Early Coast Age" value={earlyCoastAge} onChange={setEarlyCoastAge} min={Math.max(currentAge + 1, 30)} max={Math.max(currentAge + 1, 65)} step={1} suffix=" yrs" helpText="Stop investing AND retire early at this age" />
               <SliderInput label="Preservation Age" value={preservationAge} onChange={setPreservationAge} min={55} max={65} step={1} suffix=" yrs" />
 
               <SectionHeader>Balances</SectionHeader>
@@ -533,9 +528,8 @@
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid, marginBottom: 10 }}>
                   FIRE Milestones
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
                   <MilestoneCard milestone={results.coastRetire} pillBg={`${T.green}15`} pillBorder={`${T.green}40`} pillColor={T.green} currentYear={currentYear} currentAge={currentAge} />
-                  <MilestoneCard milestone={results.coastEarly} pillBg={`${T.green}15`} pillBorder={`${T.green}40`} pillColor={T.green} currentYear={currentYear} currentAge={currentAge} />
                   <MilestoneCard milestone={results.barista} pillBg={`${T.accent}15`} pillBorder={`${T.accent}40`} pillColor={T.accent} currentYear={currentYear} currentAge={currentAge} />
                   <MilestoneCard milestone={results.fullFire} pillBg={`${T.indigo}15`} pillBorder={`${T.indigo}40`} pillColor={T.indigo} currentYear={currentYear} currentAge={currentAge} />
                 </div>
@@ -623,7 +617,7 @@
                   </div>
                 </div>
                 <ResponsiveContainer width="100%" height={isMobile ? 320 : 460}>
-                  <ComposedChart data={results.projection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
+                  <ComposedChart data={results.projection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 72, left: 20, bottom: 5 }}>
                     <defs>
                       <linearGradient id="msSuperGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#818cf8" stopOpacity={0.6} />
@@ -643,17 +637,13 @@
                     <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false} name="Total Portfolio" />
                     {/* Horizontal milestone lines */}
                     <ReferenceLine y={results.fireNumber} stroke={T.accent} strokeDasharray="6 4" strokeOpacity={0.7}
-                      label={{ value: `FIRE: ${fmt(results.fireNumber)}`, fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
+                      label={{ value: "FIRE", fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
                     <ReferenceLine y={results.barista.requiredPortfolio} stroke={T.accent} strokeDasharray="3 3" strokeOpacity={0.5}
-                      label={{ value: `Barista: ${fmt(results.barista.requiredPortfolio)}`, fill: T.accent, fontSize: 10, position: "right" }} />
+                      label={{ value: "Barista", fill: T.accent, fontSize: 10, position: "right" }} />
                     {/* Vertical milestone lines */}
                     {results.coastRetire.atAge != null && results.coastRetire.atAge < 100 && (
                       <ReferenceLine x={results.coastRetire.atAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.5}
                         label={{ value: `Coast ${targetRetireAge}`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: 12 }} />
-                    )}
-                    {results.coastEarly.atAge != null && results.coastEarly.atAge < 100 && results.coastEarly.atAge !== results.coastRetire.atAge && (
-                      <ReferenceLine x={results.coastEarly.atAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.4}
-                        label={{ value: `Coast ${earlyCoastAge}`, position: "insideTopRight", fill: T.green, fontSize: 10, dy: 26 }} />
                     )}
                     {results.fullFire.atAge != null && results.fullFire.atAge < 100 && (
                       <ReferenceLine x={results.fullFire.atAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
@@ -697,7 +687,6 @@
                 Starting portfolio {fmt(superBalance + outsideBalance)} ·
                 FIRE number = spending ÷ {swr}% SWR ·
                 Coast FIRE uses portfolio + ongoing SG only (no voluntary contributions) ·
-                Bridge fund covers age {earlyCoastAge}–{preservationAge} for early Coast FIRE ·
                 All figures in today's dollars · Projections are estimates, not guarantees.
               </div>
             </div>
@@ -778,7 +767,7 @@
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        earlyCoastAge, coastJobIncome, baristaIncome,
+        coastJobIncome, baristaIncome,
       } = opts;
 
       const nomRet = returnRate / 100;
@@ -950,7 +939,6 @@
 
       // ─── Compute milestones ───
       const coastRetireAge = findCoastAge(targetRetireAge);
-      const coastEarlyAge = findCoastAge(earlyCoastAge);
       const baristaAge = findBaristaAge();
       const fullFireAge = findFullFireAge();
 
@@ -1014,7 +1002,6 @@
       };
 
       const coastRetireRequired = coastRetireAge != null ? requiredPortfolioForCoast(targetRetireAge, coastRetireAge) : null;
-      const coastEarlyRequired = coastEarlyAge != null ? requiredPortfolioForCoast(earlyCoastAge, coastEarlyAge) : null;
       const baristaRequired = baristaSpendingGap > 0 ? baristaSpendingGap / swrDec : 0;
 
       const coastJobNote = coastJobGap > 0
@@ -1031,18 +1018,6 @@
           : coastRetireAge <= currentAge
             ? `Already coasting. ${coastJobNote}`
             : `By age ${coastRetireAge}, your portfolio reaches ${fmt(coastRetireRequired || 0)}. ${coastJobNote}`,
-      });
-
-      const coastEarly = buildMilestone({
-        pillLabel: `Coast FIRE · ${earlyCoastAge}`,
-        subtitle: `Stop investing, retire early at ${earlyCoastAge}`,
-        atAge: coastEarlyAge,
-        requiredPortfolio: coastEarlyRequired,
-        explanation: coastEarlyAge == null
-          ? `Coasting AND retiring at ${earlyCoastAge} requires more outside-super (for the bridge to age ${preservationAge}) than your plan delivers.`
-          : coastEarlyAge <= currentAge
-            ? `Already coasting. Outside-super covers age ${earlyCoastAge}–${preservationAge} bridge, super compounds. ${coastJobNote}`
-            : `By ${coastEarlyAge}, portfolio reaches ${fmt(coastEarlyRequired || 0)}. Bridge covers age ${earlyCoastAge}–${preservationAge}, then super takes over. ${coastJobNote}`,
       });
 
       const barista = buildMilestone({
@@ -1076,7 +1051,7 @@
         fireNumber,
         realRetOut: realRetOut * 100,
         realRetSuper: realRetSuper * 100,
-        coastRetire, coastEarly, barista, fullFire,
+        coastRetire, barista, fullFire,
         projection,
       };
     }
@@ -1144,13 +1119,15 @@
       };
       r.readAsText(f);
     };
-    // Service worker registration TEMPORARILY disabled while we recover from a
-    // broken SW cache. sw.js is a kill-switch that removes itself on activation.
-    // Will re-enable once confirmed the PWA renders cleanly again.
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function(regs){
-        for (var i = 0; i < regs.length; i++) { regs[i].unregister(); }
-      }).catch(function(){});
+      window.addEventListener('load', function(){
+        navigator.serviceWorker.register('./sw.js').then(function(reg){
+          // Actively check for a newer SW on every load so deploys propagate.
+          if (reg && reg.update) { try { reg.update(); } catch(_){} }
+        }).catch(function(err){
+          console.warn('SW registration failed:', err);
+        });
+      });
     }
   })();
   </script>
