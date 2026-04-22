@@ -1,6 +1,6 @@
 // Bump this version string whenever any asset (HTML, icon, etc.) changes,
 // so installed devices fetch the new build instead of serving stale cache.
-const CACHE = 'fire-au-v1';
+const CACHE = 'fire-au-v2';
 
 const LOCAL_ASSETS = [
   './',
