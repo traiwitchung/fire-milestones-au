@@ -638,8 +638,6 @@
                     {/* Horizontal milestone lines */}
                     <ReferenceLine y={results.fireNumber} stroke={T.accent} strokeDasharray="6 4" strokeOpacity={0.7}
                       label={{ value: "FIRE", fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
-                    <ReferenceLine y={results.barista.requiredPortfolio} stroke={T.accent} strokeDasharray="3 3" strokeOpacity={0.5}
-                      label={{ value: "Barista", fill: T.accent, fontSize: 10, position: "right" }} />
                     {/* Vertical milestone lines */}
                     {results.coastRetire.atAge != null && results.coastRetire.atAge < 100 && (
                       <ReferenceLine x={results.coastRetire.atAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.5}
@@ -861,56 +859,63 @@
         return null;
       };
 
-      // ─── Find Barista FIRE age ───
-      // At barista point, you switch to part-time work (baristaIncome). The barista job
-      // pays SG into super. You stop voluntary contributions and stop monthlySaving.
-      // The portfolio + barista net income must sustain your lifestyle indefinitely.
-      // Specifically: (portfolio × SWR) + baristaNetIncome >= annualSpending
-      // BUT we also need to pass the AU bridge check: outside must cover the gap
-      // between baristaNetIncome and annualSpending until preservation.
+      // ─── Find Barista FIRE downshift age ───
+      // New definition (2026-04): you downshift to part-time work (baristaIncome) at
+      // baristaAge and keep doing barista work UNTIL targetRetireAge. Then you fully
+      // retire. So the question is: what's the EARLIEST age you can downshift to
+      // barista AND still hit Full FIRE by targetRetireAge (with bridge to preservation
+      // age handled correctly)?
+      //
+      // During the barista phase: barista job's SG flows into super, voluntary super
+      // and outside saving stop. If barista net income < annual spending, the gap is
+      // drawn from outside-super each year.
+      //
+      // After targetRetireAge: full retirement — outside funds the bridge to
+      // preservation, then super takes over. Test the same way Full FIRE is tested.
+
       const baristaNetIncome = baristaIncome - calcIncomeTax(baristaIncome);
       const baristaSpendingGap = Math.max(0, annualSpending - baristaNetIncome);
       const baristaSGContrib = calcYearContribs(baristaIncome, sg, 0, cap);
 
-      const canBaristaAt = (age, sNow, oNow) => {
-        // Required portfolio: (annualSpending - baristaNetIncome) / SWR
-        // i.e., portfolio yields enough at SWR to fill the spending gap
-        if (baristaSpendingGap === 0) {
-          // Barista job covers everything by itself (after super accumulation)
-          // Still need bridge fund check if barista is meant as full retirement income
-          return true;
+      // Simulate the full plan for a given downshift age. Returns the (super, outside)
+      // pair at targetRetireAge if no negative balances along the way; null otherwise.
+      const simulateBaristaPath = (downshiftAge) => {
+        let s = superBalance, o = outsideBalance;
+        // Phase 1: full-time work, currentAge → downshiftAge − 1
+        for (let age = currentAge; age < downshiftAge; age++) {
+          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          s = s * (1 + realRetSuper) + c.netSuperContrib;
+          o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
         }
-        const requiredPortfolio = baristaSpendingGap / swrDec;
+        // Phase 2: barista, downshiftAge → targetRetireAge − 1
+        for (let age = downshiftAge; age < targetRetireAge; age++) {
+          s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
+          o = o * (1 + realRetOut) - baristaSpendingGap;
+          if (o < 0) return null; // outside ran out during barista years
+        }
+        return { s, o };
+      };
 
-        // AU bridge check: we need to actually be able to use the portfolio NOW
-        // even if much of it is in super.
-        // - If age >= preservationAge: super accessible, just need total >= required
-        // - If age < preservationAge: outside must cover bridge of (baristaSpendingGap × bridge years)
-        //   AND combined assets at preservation must yield enough at SWR
-        if (age >= preservationAge) {
-          return (sNow + oNow) >= requiredPortfolio;
+      // Does a given (super, outside) pair at targetRetireAge survive full retirement?
+      const survivesFullRetirement = (sAtRet, oAtRet) => {
+        if (targetRetireAge >= preservationAge) {
+          return (sAtRet + oAtRet) * swrDec >= annualSpending;
         }
-        const bridgeYrs = preservationAge - age;
-        const bridge = bridgePV(bridgeYrs, baristaSpendingGap);
-        if (oNow < bridge) return false;
-        // After bridge, leftover outside + super (which received SG during barista years) at preservation
-        const oLeftover = oNow - bridge;
-        // Project super forward with barista-job SG contributions over the bridge period
-        const r = realRetSuper;
-        const fv = Math.pow(1 + r, bridgeYrs);
-        const sgFV = r !== 0 ? baristaSGContrib.netSuperContrib * (fv - 1) / r : baristaSGContrib.netSuperContrib * bridgeYrs;
-        const sAtPres = sNow * fv + sgFV;
-        const oLeftoverAtPres = oLeftover * Math.pow(1 + realRetOut, bridgeYrs);
-        return (sAtPres + oLeftoverAtPres) >= requiredPortfolio;
+        // Bridge years: outside must fund spending until preservation
+        let s = sAtRet, o = oAtRet;
+        for (let age = targetRetireAge; age < preservationAge; age++) {
+          s = s * (1 + realRetSuper);
+          o = o * (1 + realRetOut) - annualSpending;
+          if (o < 0) return false;
+        }
+        // At preservation, super alone must support spending at SWR
+        return s * swrDec >= annualSpending;
       };
 
       const findBaristaAge = () => {
-        let sS = superBalance, sO = outsideBalance;
-        for (let age = currentAge; age <= 100; age++) {
-          if (canBaristaAt(age, sS, sO)) return age;
-          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
-          sS = sS * (1 + realRetSuper) + c.netSuperContrib;
-          sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        for (let age = currentAge; age <= targetRetireAge; age++) {
+          const end = simulateBaristaPath(age);
+          if (end && survivesFullRetirement(end.s, end.o)) return age;
         }
         return null;
       };
@@ -1002,7 +1007,28 @@
       };
 
       const coastRetireRequired = coastRetireAge != null ? requiredPortfolioForCoast(targetRetireAge, coastRetireAge) : null;
-      const baristaRequired = baristaSpendingGap > 0 ? baristaSpendingGap / swrDec : 0;
+      // For the new Barista FIRE model, "required portfolio" isn't a single SWR-derived
+      // threshold — it's the portfolio you'd actually have at the downshift age along
+      // the optimal path. Compute that for display, plus the portfolio at targetRetireAge.
+      let baristaPortfolioAtDownshift = 0;
+      let baristaPortfolioAtRetire = 0;
+      if (baristaAge != null) {
+        let s = superBalance, o = outsideBalance;
+        for (let age = currentAge; age < baristaAge; age++) {
+          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          s = s * (1 + realRetSuper) + c.netSuperContrib;
+          o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        baristaPortfolioAtDownshift = s + o;
+        for (let age = baristaAge; age < targetRetireAge; age++) {
+          s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
+          o = o * (1 + realRetOut) - baristaSpendingGap;
+        }
+        baristaPortfolioAtRetire = s + o;
+      }
+      const baristaGapNote = baristaSpendingGap > 0
+        ? `Barista net (${fmt(baristaNetIncome)}) leaves a ${fmt(baristaSpendingGap)}/yr gap drawn from outside-super.`
+        : `Barista net (${fmt(baristaNetIncome)}) covers full spending — outside-super keeps growing.`;
 
       const coastJobNote = coastJobGap > 0
         ? `Coast job ${fmt(coastJobIncome)} (gross) leaves a ${fmt(coastJobGap)}/yr shortfall drawn from outside-super. SG ${fmt(coastJobNetSuper)}/yr still flows to super.`
@@ -1022,16 +1048,15 @@
 
       const barista = buildMilestone({
         pillLabel: "Barista FIRE",
-        subtitle: `Part-time work (~${fmt(baristaIncome)}/yr gross) plus portfolio`,
+        subtitle: `Downshift to part-time (~${fmt(baristaIncome)}/yr gross) until age ${targetRetireAge}, then fully retire`,
         atAge: baristaAge,
-        requiredPortfolio: baristaRequired,
-        explanation: baristaSpendingGap === 0
-          ? `Barista net income (${fmt(baristaNetIncome)}) already covers your full spending. Any portfolio gives you full Barista FIRE — you just need bridge fund to preservation age.`
-          : baristaAge == null
-            ? `Portfolio never reaches ${fmt(baristaRequired)} (the amount needed to fill the ${fmt(baristaSpendingGap)} spending gap at ${swr}% SWR).`
-            : baristaAge <= currentAge
-              ? `Portfolio yields ~${fmt(baristaSpendingGap)}/yr at ${swr}% SWR — exactly the gap between your spending and barista net income (${fmt(baristaNetIncome)}).`
-              : `By age ${baristaAge}, portfolio reaches ${fmt(baristaRequired)}. Barista job covers ${fmt(baristaNetIncome)}, portfolio fills the rest.`,
+        requiredPortfolio: baristaPortfolioAtDownshift,
+        projectedPortfolio: baristaPortfolioAtRetire,
+        explanation: baristaAge == null
+          ? `Even downshifting today to ${fmt(baristaIncome)}/yr won't let your portfolio reach Full FIRE by age ${targetRetireAge}. Try raising barista income, increasing current saving, or pushing out the target retirement age.`
+          : baristaAge <= currentAge
+            ? `You can downshift to part-time today. ${baristaGapNote} Portfolio still grows to ${fmt(baristaPortfolioAtRetire)} by age ${targetRetireAge} — enough to fully retire then.`
+            : `By age ${baristaAge} portfolio reaches ${fmt(baristaPortfolioAtDownshift)} — enough to downshift. ${baristaGapNote} Portfolio still grows to ${fmt(baristaPortfolioAtRetire)} by age ${targetRetireAge}.`,
       });
 
       const fullFire = buildMilestone({
