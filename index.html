@@ -261,6 +261,7 @@
     const MS_DEFAULTS = {
       coastJobIncome: 50000,
       baristaIncome: 40000,
+      purchases: [], // [{ id, label, age, amount }] — amount is in NOMINAL future dollars at that age
     };
 
     function loadFireInputs() {
@@ -369,6 +370,21 @@
       // Milestone-specific
       const [coastJobIncome, setCoastJobIncome] = useState(msSaved.coastJobIncome);
       const [baristaIncome, setBaristaIncome] = useState(msSaved.baristaIncome);
+      const [purchases, setPurchases] = useState(() =>
+        (msSaved.purchases || []).map(p => ({ ...p, id: p.id || Date.now() + Math.random() }))
+      );
+
+      const addPurchase = () => {
+        setPurchases(prev => [...prev, {
+          id: Date.now() + Math.random(),
+          label: "",
+          age: Math.min(currentAge + 5, targetRetireAge),
+          amount: 50000,
+        }]);
+      };
+      const removePurchase = (id) => setPurchases(prev => prev.filter(p => p.id !== id));
+      const updatePurchase = (id, field, value) =>
+        setPurchases(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
 
       // Persist shared inputs back to FIRE Suite key
       const fireInputs = {
@@ -378,7 +394,7 @@
         returnRate, inflationRate, sgRate, swr,
         superEarningsTax, annualSpending,
       };
-      const msInputs = { coastJobIncome, baristaIncome };
+      const msInputs = { coastJobIncome, baristaIncome, purchases };
       const fireRef = useRef(fireInputs); fireRef.current = fireInputs;
       const msRef = useRef(msInputs); msRef.current = msInputs;
 
@@ -401,13 +417,13 @@
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        coastJobIncome, baristaIncome,
+        coastJobIncome, baristaIncome, purchases,
       }), [
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        coastJobIncome, baristaIncome,
+        coastJobIncome, baristaIncome, purchases,
       ]);
 
       const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
@@ -500,6 +516,67 @@
               <SectionHeader>Barista FIRE</SectionHeader>
               <SliderInput label="Barista Income (gross)" value={baristaIncome} onChange={setBaristaIncome} min={0} max={150000} step={2000} format="currency"
                 helpText="Part-time income that offsets some spending — portfolio fills the gap." />
+
+              <SectionHeader>Big Purchases</SectionHeader>
+              <div style={{ fontSize: 11, color: T.textDim, marginBottom: 10, fontStyle: "italic", lineHeight: 1.5 }}>
+                One-off lump sums (house deposit, car, reno). Amount is in <strong style={{ color: T.textMid }}>future $ at that age</strong> — we deflate to today's $ before applying.
+              </div>
+              {purchases.map(p => {
+                const yrsAway = Math.max(0, p.age - currentAge);
+                const realToday = p.amount / Math.pow(1 + inflationRate / 100, yrsAway);
+                return (
+                  <div key={p.id} style={{
+                    display: "grid", gridTemplateColumns: "1fr 46px 88px 24px", gap: 5,
+                    marginBottom: 6, alignItems: "center",
+                  }}>
+                    <input type="text" placeholder="Label" value={p.label}
+                      onChange={(e) => updatePurchase(p.id, "label", e.target.value)}
+                      style={{
+                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: "4px 7px", fontSize: 12, color: T.text, outline: "none",
+                        width: "100%", minWidth: 0, fontFamily: "'DM Sans', sans-serif",
+                      }} />
+                    <input type="number" placeholder="Age" value={p.age}
+                      onChange={(e) => updatePurchase(p.id, "age", parseInt(e.target.value) || 0)}
+                      style={{
+                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: "4px 6px", fontSize: 12, color: T.text, outline: "none",
+                        width: "100%", minWidth: 0, textAlign: "right", ...mono,
+                      }} />
+                    <input type="number" placeholder="$" value={p.amount}
+                      onChange={(e) => updatePurchase(p.id, "amount", parseFloat(e.target.value) || 0)}
+                      style={{
+                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: "4px 7px", fontSize: 12, color: T.text, outline: "none",
+                        width: "100%", minWidth: 0, textAlign: "right", ...mono,
+                      }} />
+                    <button onClick={() => removePurchase(p.id)} title="Remove"
+                      style={{
+                        background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: 0, height: 28, width: 24, cursor: "pointer",
+                        color: T.textDim, fontSize: 14, display: "flex",
+                        alignItems: "center", justifyContent: "center",
+                      }}>×</button>
+                    {p.amount > 0 && yrsAway > 0 && (
+                      <div style={{
+                        gridColumn: "1 / -1",
+                        fontSize: 10, color: T.textDark, marginTop: -2, marginBottom: 4,
+                        textAlign: "right", paddingRight: 32, fontStyle: "italic",
+                      }}>
+                        ≈ {fmt(realToday)} in today's $
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <button onClick={addPurchase}
+                style={{
+                  width: "100%", background: "transparent",
+                  border: "1px dashed rgba(255,255,255,0.15)", borderRadius: 6,
+                  padding: "7px 12px", cursor: "pointer", color: T.textMid,
+                  fontSize: 12, fontWeight: 600, marginTop: 4,
+                  fontFamily: "'DM Sans', sans-serif",
+                }}>+ Add Purchase</button>
 
               <SectionHeader>Assumptions</SectionHeader>
               <SliderInput label="Nominal Return" value={returnRate} onChange={setReturnRate} min={3} max={12} step={0.5} format="percent" />
@@ -714,6 +791,11 @@
                     )}
                     <ReferenceLine x={preservationAge} stroke={T.textMid} strokeDasharray="2 4" strokeOpacity={0.3}
                       label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: 48 }} />
+                    {/* Big-purchase markers */}
+                    {purchases.filter(p => p.amount > 0 && p.age >= currentAge && p.age <= chartEndAge).map(p => (
+                      <ReferenceLine key={p.id} x={p.age} stroke={T.red} strokeDasharray="2 3" strokeOpacity={0.45}
+                        label={{ value: `${p.label || "Purchase"} ${fmt(p.amount)}`, position: "insideBottomRight", fill: T.red, fontSize: 9, fontWeight: 600, dy: -4 }} />
+                    ))}
                     <Legend verticalAlign="top" height={36}
                       formatter={(val) => <span style={{ color: T.textMid, fontSize: 11 }}>{val}</span>} />
                   </ComposedChart>
@@ -830,7 +912,7 @@
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        coastJobIncome, baristaIncome,
+        coastJobIncome, baristaIncome, purchases,
       } = opts;
 
       const nomRet = returnRate / 100;
@@ -845,6 +927,21 @@
       const realRetSuperPension = (1 + nomRet) / (1 + infl) - 1;
       const annualOutsideSaving = monthlySaving * 12;
       const fireNumber = annualSpending / swrDec;
+
+      // ─── Purchases helper ───
+      // User enters amount in NOMINAL future $ at the purchase age. The whole
+      // simulation runs in REAL (today's) $, so we deflate to today's $ before
+      // applying. Multiple purchases at the same age are summed.
+      const purchaseList = (purchases || []).filter(p => p && p.amount > 0 && p.age >= currentAge);
+      const purchaseRealAtAge = (age) => {
+        let sum = 0;
+        for (const p of purchaseList) {
+          if (p.age === age) {
+            sum += p.amount / Math.pow(1 + infl, Math.max(0, age - currentAge));
+          }
+        }
+        return sum;
+      };
 
       // ─── Bridge fund (PV annuity) ───
       const bridgePV = (yrs, annualGap) => {
@@ -871,43 +968,31 @@
       // Retirement phase (retireAge → preservationAge): outside-super funds the
       // bridge (full annualSpending). Combined assets at preservation must yield
       // enough to support spending for life.
+      // (Year-by-year so purchases can be applied at the right age.)
       const canCoastAt = (age, sNow, oNow, retireAge) => {
-        const yrsToRetire = Math.max(0, retireAge - age);
-
-        // Project balances through the COAST PHASE (age → retireAge)
-        // Super grows at realRetSuper and receives coastJobNetSuper each year.
-        // FV with annuity: sNow*(1+r)^n + sgFV*((1+r)^n - 1)/r
-        let sAtRet, oAtRet;
-        if (yrsToRetire === 0) {
-          sAtRet = sNow;
-          oAtRet = oNow;
-        } else {
-          const fvSup = Math.pow(1 + realRetSuper, yrsToRetire);
-          const sgFV = realRetSuper !== 0
-            ? coastJobNetSuper * (fvSup - 1) / realRetSuper
-            : coastJobNetSuper * yrsToRetire;
-          sAtRet = sNow * fvSup + sgFV;
-          // Outside: drawdown coastJobGap each year (annuity in reverse)
-          // FV: oNow*(1+r)^n - gap * ((1+r)^n - 1)/r
-          const fvOut = Math.pow(1 + realRetOut, yrsToRetire);
-          const gapFV = realRetOut !== 0
-            ? coastJobGap * (fvOut - 1) / realRetOut
-            : coastJobGap * yrsToRetire;
-          oAtRet = oNow * fvOut - gapFV;
-          if (oAtRet < 0) return false; // ran out during coast
+        let s = sNow, o = oNow;
+        // Coast phase
+        for (let a = age; a < retireAge; a++) {
+          const purchase = purchaseRealAtAge(a);
+          if (purchase > 0) o = o - purchase;
+          if (o < 0) return false;
+          s = s * (1 + realRetSuper) + coastJobNetSuper;
+          o = o * (1 + realRetOut) - coastJobGap;
+          if (o < 0) return false;
         }
-
         if (retireAge >= preservationAge) {
-          return (sAtRet + oAtRet) >= fireNumber;
+          return (s + o) >= fireNumber;
         }
-        // Pre-preservation retirement: bridge from outside, combined at pres >= fireNumber
-        const yrsRetToPres = preservationAge - retireAge;
-        const bridge = bridgePV(yrsRetToPres, annualSpending);
-        if (oAtRet < bridge) return false;
-        const oLeftover = oAtRet - bridge;
-        const sAtPres = sAtRet * Math.pow(1 + realRetSuper, yrsRetToPres);
-        const oLeftoverAtPres = oLeftover * Math.pow(1 + realRetOut, yrsRetToPres);
-        return (sAtPres + oLeftoverAtPres) >= fireNumber;
+        // Bridge phase: outside funds full spending until preservation
+        for (let a = retireAge; a < preservationAge; a++) {
+          const purchase = purchaseRealAtAge(a);
+          if (purchase > 0) o = o - purchase;
+          if (o < 0) return false;
+          s = s * (1 + realRetSuper);
+          o = o * (1 + realRetOut) - annualSpending;
+          if (o < 0) return false;
+        }
+        return (s + o) >= fireNumber;
       };
 
       // ─── Find Coast FIRE age (with given retireAge target) ───
@@ -917,6 +1002,8 @@
           if (age > retireAge) return null;
           if (canCoastAt(age, sS, sO, retireAge)) return age;
           // Save another year (full saving phase, NOT coasting yet)
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) sO = Math.max(0, sO - purchase);
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           sS = sS * (1 + realRetSuper) + c.netSuperContrib;
           sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
@@ -948,12 +1035,18 @@
         let s = superBalance, o = outsideBalance;
         // Phase 1: full-time work, currentAge → downshiftAge − 1
         for (let age = currentAge; age < downshiftAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = o - purchase;
+          if (o < 0) return null;
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           s = s * (1 + realRetSuper) + c.netSuperContrib;
           o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
         }
         // Phase 2: barista, downshiftAge → targetRetireAge − 1
         for (let age = downshiftAge; age < targetRetireAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = o - purchase;
+          if (o < 0) return null;
           s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
           o = o * (1 + realRetOut) - baristaSpendingGap;
           if (o < 0) return null; // outside ran out during barista years
@@ -969,6 +1062,9 @@
         // Bridge years: outside must fund spending until preservation
         let s = sAtRet, o = oAtRet;
         for (let age = targetRetireAge; age < preservationAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = o - purchase;
+          if (o < 0) return false;
           s = s * (1 + realRetSuper);
           o = o * (1 + realRetOut) - annualSpending;
           if (o < 0) return false;
@@ -985,21 +1081,31 @@
         return null;
       };
 
-      // ─── Find Full FIRE age (regular FIRE with same logic as FIRE Suite) ───
+      // ─── Find Full FIRE age ───
+      // Year-by-year so purchases can land at the correct age. For each candidate
+      // retire age, simulate the bridge years and check that combined assets at
+      // preservation satisfy the FIRE number (annualSpending / SWR).
+      const canFullyRetireAt = (retireAge, sNow, oNow) => {
+        let s = sNow, o = oNow;
+        if (retireAge >= preservationAge) {
+          return (s + o) >= fireNumber;
+        }
+        for (let a = retireAge; a < preservationAge; a++) {
+          const purchase = purchaseRealAtAge(a);
+          if (purchase > 0) o = o - purchase;
+          if (o < 0) return false;
+          s = s * (1 + realRetSuper);
+          o = o * (1 + realRetOut) - annualSpending;
+          if (o < 0) return false;
+        }
+        return (s + o) >= fireNumber;
+      };
       const findFullFireAge = () => {
         let sS = superBalance, sO = outsideBalance;
         for (let age = currentAge; age <= 100; age++) {
-          if (age >= preservationAge) {
-            if (sS + sO >= fireNumber) return age;
-          } else {
-            const yrsToP = preservationAge - age;
-            const bridge = bridgePV(yrsToP, annualSpending);
-            if (sO >= bridge) {
-              const sAP = sS * Math.pow(1 + realRetSuper, yrsToP);
-              const oAP = (sO - bridge) * Math.pow(1 + realRetOut, yrsToP);
-              if (sAP + oAP >= fireNumber) return age;
-            }
-          }
+          if (canFullyRetireAt(age, sS, sO)) return age;
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) sO = Math.max(0, sO - purchase);
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           sS = sS * (1 + realRetSuper) + c.netSuperContrib;
           sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
@@ -1042,6 +1148,12 @@
             total: Math.round(pSuper + pOutside),
           });
           if (age < maxAge) {
+            // Purchase at this age — outside (pre-pres) or super (post-pres)
+            const purchase = purchaseRealAtAge(age);
+            if (purchase > 0) {
+              if (age >= preservationAge) pSuper = Math.max(0, pSuper - purchase);
+              else pOutside = Math.max(0, pOutside - purchase);
+            }
             if (downshiftAge != null && age >= downshiftAge && age < targetRetireAge) {
               // Coast/Barista phase: SG flows in, outside funds spending gap
               pSuper = pSuper * (1 + realRetSuper) + downshiftSGNet;
@@ -1107,14 +1219,18 @@
       if (baristaAge != null) {
         let s = superBalance, o = outsideBalance;
         for (let age = currentAge; age < baristaAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = Math.max(0, o - purchase);
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           s = s * (1 + realRetSuper) + c.netSuperContrib;
           o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
         }
         baristaPortfolioAtDownshift = s + o;
         for (let age = baristaAge; age < targetRetireAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = Math.max(0, o - purchase);
           s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
-          o = o * (1 + realRetOut) - baristaSpendingGap;
+          o = Math.max(0, o * (1 + realRetOut) - baristaSpendingGap);
         }
         baristaPortfolioAtRetire = s + o;
       }
