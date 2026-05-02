@@ -411,9 +411,20 @@
       ]);
 
       const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
+      const [projectionMode, setProjectionMode] = useState("full");
 
       const currentYear = new Date().getFullYear();
       const annualInvesting = monthlySaving * 12 + voluntarySuper * 12;
+
+      // Pick the active projection. If the chosen mode's milestone isn't reached,
+      // silently fall back to the full-FIRE projection (button is also disabled).
+      const activeProjection =
+        projectionMode === "coast" && results.coastRetire.atAge != null ? results.projectionCoast :
+        projectionMode === "barista" && results.barista.atAge != null ? results.projectionBarista :
+        results.projection;
+      const downshiftAge =
+        projectionMode === "coast" ? results.coastRetire.atAge :
+        projectionMode === "barista" ? results.barista.atAge : null;
 
       return (
         <div style={{
@@ -584,8 +595,35 @@
                 borderRadius: 12, padding: "20px 12px 12px 0",
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingLeft: 20, paddingRight: 16, marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
-                    Portfolio Growth Projection
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
+                      Portfolio Growth Projection
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {[
+                        { id: "full", label: "Full FIRE", color: T.indigo, enabled: true },
+                        { id: "coast", label: "Coast FIRE", color: T.green, enabled: results.coastRetire.atAge != null },
+                        { id: "barista", label: "Barista FIRE", color: T.accent, enabled: results.barista.atAge != null },
+                      ].map(btn => {
+                        const active = projectionMode === btn.id;
+                        return (
+                          <button key={btn.id}
+                            onClick={() => btn.enabled && setProjectionMode(btn.id)}
+                            disabled={!btn.enabled}
+                            title={btn.enabled ? `Show ${btn.label} trajectory` : `${btn.label} milestone not reached with current inputs`}
+                            style={{
+                              padding: "3px 10px", borderRadius: 4,
+                              cursor: btn.enabled ? "pointer" : "not-allowed",
+                              background: active ? `${btn.color}15` : "transparent",
+                              border: `1px solid ${active ? `${btn.color}60` : "rgba(255,255,255,0.08)"}`,
+                              color: active ? btn.color : (btn.enabled ? T.textDim : T.textDark),
+                              opacity: btn.enabled ? 1 : 0.4,
+                              fontSize: 11, fontWeight: 600, ...mono,
+                              transition: "all 0.15s",
+                            }}>{btn.label}</button>
+                        );
+                      })}
+                    </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 11, color: T.textDim }}>Show to age</span>
@@ -616,8 +654,26 @@
                     <span style={{ fontSize: 11, color: T.accent, ...mono, minWidth: 20 }}>{chartEndAge}</span>
                   </div>
                 </div>
+                {/* Trajectory description */}
+                <div style={{ paddingLeft: 20, paddingRight: 16, marginBottom: 8, fontSize: 11, color: T.textDim, fontStyle: "italic" }}>
+                  {projectionMode === "full" && (
+                    <>Save full-time until age {targetRetireAge}, then fully retire. Outside funds the bridge to preservation age.</>
+                  )}
+                  {projectionMode === "coast" && results.coastRetire.atAge != null && (
+                    <>Save full-time until age {results.coastRetire.atAge}, then downshift to coast job until age {targetRetireAge}, then fully retire.</>
+                  )}
+                  {projectionMode === "coast" && results.coastRetire.atAge == null && (
+                    <>Coast FIRE not reachable with current inputs — showing Full FIRE trajectory.</>
+                  )}
+                  {projectionMode === "barista" && results.barista.atAge != null && (
+                    <>Save full-time until age {results.barista.atAge}, then downshift to barista work until age {targetRetireAge}, then fully retire.</>
+                  )}
+                  {projectionMode === "barista" && results.barista.atAge == null && (
+                    <>Barista FIRE not reachable with current inputs — showing Full FIRE trajectory.</>
+                  )}
+                </div>
                 <ResponsiveContainer width="100%" height={isMobile ? 320 : 460}>
-                  <ComposedChart data={results.projection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 72, left: 20, bottom: 5 }}>
+                  <ComposedChart data={activeProjection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 72, left: 20, bottom: 5 }}>
                     <defs>
                       <linearGradient id="msSuperGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#818cf8" stopOpacity={0.6} />
@@ -635,20 +691,29 @@
                     <Area type="monotone" dataKey="outside" stackId="nw" stroke="#2dd4bf" fill="url(#msOutsideGrad)" strokeWidth={1.5} name="Outside-Super" />
                     <Area type="monotone" dataKey="super" stackId="nw" stroke="#818cf8" fill="url(#msSuperGrad)" strokeWidth={1.5} name="Super" />
                     <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false} name="Total Portfolio" />
-                    {/* Horizontal milestone lines */}
+                    {/* Horizontal FIRE number — always shown */}
                     <ReferenceLine y={results.fireNumber} stroke={T.accent} strokeDasharray="6 4" strokeOpacity={0.7}
                       label={{ value: "FIRE", fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
-                    {/* Vertical milestone lines */}
-                    {results.coastRetire.atAge != null && results.coastRetire.atAge < 100 && (
-                      <ReferenceLine x={results.coastRetire.atAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.5}
-                        label={{ value: `Coast ${targetRetireAge}`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: 12 }} />
-                    )}
-                    {results.fullFire.atAge != null && results.fullFire.atAge < 100 && (
+                    {/* Mode-specific vertical markers */}
+                    {projectionMode === "full" && results.fullFire.atAge != null && results.fullFire.atAge < 100 && (
                       <ReferenceLine x={results.fullFire.atAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
-                        label={{ value: `Full FIRE`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 40 }} />
+                        label={{ value: `Full FIRE`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {projectionMode === "coast" && downshiftAge != null && (
+                      <ReferenceLine x={downshiftAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: `Coast →`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {projectionMode === "barista" && downshiftAge != null && (
+                      <ReferenceLine x={downshiftAge} stroke={T.accent} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: `Barista →`, position: "insideTopRight", fill: T.accent, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {/* Retire marker (when in coast/barista mode, this is when full retirement starts) */}
+                    {(projectionMode === "coast" || projectionMode === "barista") && downshiftAge != null && targetRetireAge !== downshiftAge && (
+                      <ReferenceLine x={targetRetireAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: `Retire ${targetRetireAge}`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 30 }} />
                     )}
                     <ReferenceLine x={preservationAge} stroke={T.textMid} strokeDasharray="2 4" strokeOpacity={0.3}
-                      label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: 54 }} />
+                      label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: 48 }} />
                     <Legend verticalAlign="top" height={36}
                       formatter={(val) => <span style={{ color: T.textMid, fontSize: 11 }}>{val}</span>} />
                   </ComposedChart>
@@ -947,37 +1012,64 @@
       const baristaAge = findBaristaAge();
       const fullFireAge = findFullFireAge();
 
-      // ─── Projection (year-by-year for chart) ───
-      const projection = [];
+      // ─── Projection builder (year-by-year for chart) ───
+      // mode: 'full' | 'coast' | 'barista'
+      // Adds a downshift phase between downshiftAge and targetRetireAge where you
+      // work the coast/barista job (no voluntary super, no monthly outside saving;
+      // the job's SG flows into super; spending gap drawn from outside).
       const currentYear = new Date().getFullYear();
-      let pSuper = superBalance, pOutside = outsideBalance;
-      const maxAge = Math.min(100, currentAge + 60);
-      for (let age = currentAge; age <= maxAge; age++) {
-        projection.push({
-          age,
-          year: currentYear + (age - currentAge),
-          super: Math.round(pSuper),
-          outside: Math.round(pOutside),
-          total: Math.round(pSuper + pOutside),
-        });
-        if (age < maxAge) {
-          if (age < targetRetireAge) {
-            const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
-            pSuper = pSuper * (1 + realRetSuper) + c.netSuperContrib;
-            pOutside = pOutside * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
-          } else if (age < preservationAge) {
-            // Retired, pre-preservation: drawdown from outside
-            pSuper = pSuper * (1 + realRetSuper);
-            pOutside = Math.max(0, pOutside * (1 + realRetOut) - annualSpending);
-          } else {
-            // Post-preservation: drawdown from super (pension phase, tax-free)
-            pSuper = Math.max(0, pSuper * (1 + realRetSuperPension) - annualSpending);
-            pOutside = pOutside * (1 + realRetOut);
+      const buildProjection = (mode) => {
+        let downshiftAge = null, downshiftSGNet = 0, downshiftGap = 0;
+        if (mode === 'coast' && coastRetireAge != null) {
+          downshiftAge = coastRetireAge;
+          downshiftSGNet = coastJobNetSuper;
+          downshiftGap = coastJobGap;
+        } else if (mode === 'barista' && baristaAge != null) {
+          downshiftAge = baristaAge;
+          downshiftSGNet = baristaSGContrib.netSuperContrib;
+          downshiftGap = baristaSpendingGap;
+        }
+
+        const proj = [];
+        let pSuper = superBalance, pOutside = outsideBalance;
+        const maxAge = Math.min(100, currentAge + 60);
+        for (let age = currentAge; age <= maxAge; age++) {
+          proj.push({
+            age,
+            year: currentYear + (age - currentAge),
+            super: Math.round(pSuper),
+            outside: Math.round(pOutside),
+            total: Math.round(pSuper + pOutside),
+          });
+          if (age < maxAge) {
+            if (downshiftAge != null && age >= downshiftAge && age < targetRetireAge) {
+              // Coast/Barista phase: SG flows in, outside funds spending gap
+              pSuper = pSuper * (1 + realRetSuper) + downshiftSGNet;
+              pOutside = Math.max(0, pOutside * (1 + realRetOut) - downshiftGap);
+            } else if (age < targetRetireAge) {
+              // Full-time saving phase
+              const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+              pSuper = pSuper * (1 + realRetSuper) + c.netSuperContrib;
+              pOutside = pOutside * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+            } else if (age < preservationAge) {
+              // Retired, pre-preservation: drawdown from outside
+              pSuper = pSuper * (1 + realRetSuper);
+              pOutside = Math.max(0, pOutside * (1 + realRetOut) - annualSpending);
+            } else {
+              // Post-preservation: drawdown from super (pension phase, tax-free)
+              pSuper = Math.max(0, pSuper * (1 + realRetSuperPension) - annualSpending);
+              pOutside = pOutside * (1 + realRetOut);
+            }
           }
         }
-      }
+        return proj;
+      };
 
-      // Projected portfolio at full FIRE age (from projection)
+      const projection = buildProjection('full');
+      const projectionCoast = buildProjection('coast');
+      const projectionBarista = buildProjection('barista');
+
+      // Projected portfolio at full FIRE age (from full projection)
       let fullFireProjected = 0;
       if (fullFireAge != null) {
         const e = projection.find(d => d.age === fullFireAge);
@@ -1078,6 +1170,8 @@
         realRetSuper: realRetSuper * 100,
         coastRetire, barista, fullFire,
         projection,
+        projectionCoast,
+        projectionBarista,
       };
     }
 
