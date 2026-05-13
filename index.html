@@ -698,6 +698,14 @@
                     <div style={{ fontSize: 13, color: T.accentLight, ...mono, marginTop: 2 }}>
                       {fmt(grossWithdrawal / 12)}<span style={{ fontSize: 11, color: T.textDim }}>/mo</span>
                     </div>
+                    <div style={{
+                      fontSize: 11, color: T.textMid, marginTop: 6, paddingTop: 6,
+                      borderTop: `1px solid ${T.accentBorder}`, ...mono,
+                    }}>
+                      Net: <span style={{ color: T.purple }}>{fmt(annualSpending)}</span><span style={{ color: T.textDim }}>/yr</span>
+                      <span style={{ color: T.textDim }}> · </span>
+                      <span style={{ color: T.purple }}>{fmt(annualSpending / 12)}</span><span style={{ color: T.textDim }}>/mo</span>
+                    </div>
                   </div>
                 </div>
                 <div style={{ fontSize: 11, color: T.textDim, marginTop: 10, lineHeight: 1.5, fontStyle: "italic" }}>
