@@ -257,9 +257,11 @@
       returnRate: 7, inflationRate: 2.5, sgRate: 12, swr: 4,
       superEarningsTax: 10, annualSpending: 50000, includeAgedPension: false,
       salaryGrowthRate: 0, cgtDragRate: 0,
-      // 2026 budget: minimum CGT rate is 30% on the gain portion of any outside-super sale.
+      // 2026 budget: 30% min CGT, 50% holding-period discount removed.
       // Effective drag on a withdrawal = minCgtRate × realizedGainShare.
-      minCgtRate: 30, realizedGainShare: 50,
+      // Default 100% gain share = treat every $ withdrawn as fully taxable gain
+      // (conservative — i.e. $100k out → $30k tax → $70k net).
+      minCgtRate: 30, realizedGainShare: 100,
     };
     const MS_DEFAULTS = {
       coastJobIncome: 50000,
@@ -270,7 +272,15 @@
     function loadFireInputs() {
       try {
         const raw = localStorage.getItem(FIRE_STORAGE_KEY);
-        if (raw) return { ...FIRE_DEFAULTS, ...JSON.parse(raw) };
+        if (raw) {
+          const stored = JSON.parse(raw);
+          // 2026-05-13 migration: realizedGainShare's old default was 50%. With the
+          // budget removing the holding-period discount, the new conservative default
+          // is 100% (treat each $ withdrawn as fully taxable gain). Auto-migrate the
+          // old default; leave any other value alone so user customisations stick.
+          if (stored.realizedGainShare === 50) stored.realizedGainShare = 100;
+          return { ...FIRE_DEFAULTS, ...stored };
+        }
       } catch {}
       return { ...FIRE_DEFAULTS };
     }
@@ -599,9 +609,9 @@
               <SliderInput label="SG Rate" value={sgRate} onChange={setSgRate} min={9} max={15} step={0.5} format="percent" />
               <SliderInput label="Super Earnings Tax" value={superEarningsTax} onChange={setSuperEarningsTax} min={0} max={30} step={1} format="percent" />
               <SliderInput label="Min CGT Rate" value={minCgtRate} onChange={setMinCgtRate} min={0} max={50} step={1} format="percent"
-                helpText="2026 budget: 30% floor on capital gains tax." />
+                helpText="2026 budget: 30% floor, no holding-period discount." />
               <SliderInput label="Realized Gain Share" value={realizedGainShare} onChange={setRealizedGainShare} min={0} max={100} step={5} format="percent"
-                helpText={`% of each withdrawal that's gain. Effective drag: ${(effectiveCgtDrag * 100).toFixed(1)}%.`} />
+                helpText={`% of each withdrawal treated as taxable gain. 100% = $100k out → $${(minCgtRate * 1000).toLocaleString()} tax → $${(100000 - minCgtRate * 1000).toLocaleString()} net. Effective drag: ${(effectiveCgtDrag * 100).toFixed(1)}%.`} />
               <SliderInput label="Safe Withdrawal Rate" value={swr} onChange={setSwr} min={2.5} max={6} step={0.25} format="percent" />
 
               <div style={{
