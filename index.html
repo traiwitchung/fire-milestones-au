@@ -257,6 +257,9 @@
       returnRate: 7, inflationRate: 2.5, sgRate: 12, swr: 4,
       superEarningsTax: 10, annualSpending: 50000, includeAgedPension: false,
       salaryGrowthRate: 0, cgtDragRate: 0,
+      // 2026 budget: minimum CGT rate is 30% on the gain portion of any outside-super sale.
+      // Effective drag on a withdrawal = minCgtRate × realizedGainShare.
+      minCgtRate: 30, realizedGainShare: 50,
     };
     const MS_DEFAULTS = {
       coastJobIncome: 50000,
@@ -366,6 +369,8 @@
       const [sgRate, setSgRate] = useState(fireSaved.sgRate);
       const [swr, setSwr] = useState(fireSaved.swr);
       const [superEarningsTax, setSuperEarningsTax] = useState(fireSaved.superEarningsTax);
+      const [minCgtRate, setMinCgtRate] = useState(fireSaved.minCgtRate);
+      const [realizedGainShare, setRealizedGainShare] = useState(fireSaved.realizedGainShare);
 
       // Milestone-specific
       const [coastJobIncome, setCoastJobIncome] = useState(msSaved.coastJobIncome);
@@ -393,6 +398,7 @@
         annualSalary, voluntarySuper, monthlySaving,
         returnRate, inflationRate, sgRate, swr,
         superEarningsTax, annualSpending,
+        minCgtRate, realizedGainShare,
       };
       const msInputs = { coastJobIncome, baristaIncome, purchases };
       const fireRef = useRef(fireInputs); fireRef.current = fireInputs;
@@ -418,13 +424,22 @@
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
         coastJobIncome, baristaIncome, purchases,
+        minCgtRate, realizedGainShare,
       }), [
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
         coastJobIncome, baristaIncome, purchases,
+        minCgtRate, realizedGainShare,
       ]);
+
+      // Effective CGT drag on any outside-super withdrawal:
+      // tax = gain × cgtRate, gain = withdrawal × gainShare → drag = cgtRate × gainShare.
+      // To net $X you must sell $X / (1 − drag).
+      const effectiveCgtDrag = (minCgtRate / 100) * (realizedGainShare / 100);
+      const grossWithdrawal = annualSpending / Math.max(1e-9, 1 - effectiveCgtDrag);
+      const cgtTaxBite = grossWithdrawal - annualSpending;
 
       const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
       const [projectionMode, setProjectionMode] = useState("full");
@@ -583,6 +598,10 @@
               <SliderInput label="Inflation" value={inflationRate} onChange={setInflationRate} min={1} max={6} step={0.5} format="percent" />
               <SliderInput label="SG Rate" value={sgRate} onChange={setSgRate} min={9} max={15} step={0.5} format="percent" />
               <SliderInput label="Super Earnings Tax" value={superEarningsTax} onChange={setSuperEarningsTax} min={0} max={30} step={1} format="percent" />
+              <SliderInput label="Min CGT Rate" value={minCgtRate} onChange={setMinCgtRate} min={0} max={50} step={1} format="percent"
+                helpText="2026 budget: 30% floor on capital gains tax." />
+              <SliderInput label="Realized Gain Share" value={realizedGainShare} onChange={setRealizedGainShare} min={0} max={100} step={5} format="percent"
+                helpText={`% of each withdrawal that's gain. Effective drag: ${(effectiveCgtDrag * 100).toFixed(1)}%.`} />
               <SliderInput label="Safe Withdrawal Rate" value={swr} onChange={setSwr} min={2.5} max={6} step={0.25} format="percent" />
 
               <div style={{
@@ -608,6 +627,73 @@
                   <StatCard label="Annual Spending" value={fmt(annualSpending)} sub={`${swr}% SWR target`} color={T.purple} />
                   <StatCard label="Annual Investing" value={fmt(annualInvesting)} sub="contributions/yr" color={T.teal} />
                   <StatCard label="Current Age" value={currentAge} sub={`target retire ${targetRetireAge}`} color={T.indigo} />
+                </div>
+              </div>
+
+              {/* Withdrawal Breakdown (bridge years — drawing from outside-super) */}
+              <div style={{
+                background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+                borderRadius: 12, padding: "14px 18px", marginBottom: 16,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
+                    Withdrawal Breakdown
+                  </div>
+                  <div style={{ fontSize: 10, color: T.textDim, fontStyle: "italic" }}>
+                    Bridge years · drawing from outside-super · effective CGT drag {(effectiveCgtDrag * 100).toFixed(1)}%
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
+                  {/* Net spending */}
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.02)", border: `1px solid ${T.panelBorder}`,
+                  }}>
+                    <div style={{ fontSize: 10, color: T.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                      Net spending (target)
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.purple, ...mono, lineHeight: 1.2 }}>
+                      {fmt(annualSpending)}<span style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>/yr</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.textMid, ...mono, marginTop: 2 }}>
+                      {fmt(annualSpending / 12)}<span style={{ fontSize: 11, color: T.textDim }}>/mo</span>
+                    </div>
+                  </div>
+                  {/* CGT tax bite */}
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.02)", border: `1px solid ${T.panelBorder}`,
+                  }}>
+                    <div style={{ fontSize: 10, color: T.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                      CGT tax bite
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.red, ...mono, lineHeight: 1.2 }}>
+                      {fmt(cgtTaxBite)}<span style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>/yr</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.textMid, ...mono, marginTop: 2 }}>
+                      {fmt(cgtTaxBite / 12)}<span style={{ fontSize: 11, color: T.textDim }}>/mo</span>
+                    </div>
+                  </div>
+                  {/* Gross withdrawal */}
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 8,
+                    background: T.accentBg, border: `1px solid ${T.accentBorder}`,
+                  }}>
+                    <div style={{ fontSize: 10, color: T.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                      Gross withdrawal needed
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.accent, ...mono, lineHeight: 1.2 }}>
+                      {fmt(grossWithdrawal)}<span style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>/yr</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.accentLight, ...mono, marginTop: 2 }}>
+                      {fmt(grossWithdrawal / 12)}<span style={{ fontSize: 11, color: T.textDim }}>/mo</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: T.textDim, marginTop: 10, lineHeight: 1.5, fontStyle: "italic" }}>
+                  To net {fmt(annualSpending)}/yr from outside-super you must sell {fmt(grossWithdrawal)} — the extra {fmt(cgtTaxBite)} is CGT
+                  ({realizedGainShare}% × {minCgtRate}% = {(effectiveCgtDrag * 100).toFixed(1)}% drag).
+                  Post-preservation super withdrawals stay tax-free (pension phase).
                 </div>
               </div>
 
@@ -913,6 +999,7 @@
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
         coastJobIncome, baristaIncome, purchases,
+        minCgtRate, realizedGainShare,
       } = opts;
 
       const nomRet = returnRate / 100;
@@ -921,6 +1008,12 @@
       const swrDec = swr / 100;
       const sTax = superEarningsTax / 100;
       const cap = 30000;
+
+      // Effective CGT drag on any sale of outside-super assets (drawdown or purchase).
+      // gain = withdrawal × realizedGainShare; tax = gain × minCgtRate
+      // To net $N, gross sale = N / (1 − drag).
+      const cgtDrag = (Math.max(0, minCgtRate || 0) / 100) * (Math.max(0, realizedGainShare || 0) / 100);
+      const grossUp = (net) => (cgtDrag >= 1 ? net * 1e9 : net / (1 - cgtDrag));
 
       const realRetOut = (1 + nomRet) / (1 + infl) - 1;
       const realRetSuper = (1 + nomRet * (1 - sTax)) / (1 + infl) - 1;
@@ -974,10 +1067,10 @@
         // Coast phase
         for (let a = age; a < retireAge; a++) {
           const purchase = purchaseRealAtAge(a);
-          if (purchase > 0) o = o - purchase;
+          if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper) + coastJobNetSuper;
-          o = o * (1 + realRetOut) - coastJobGap;
+          o = o * (1 + realRetOut) - grossUp(coastJobGap);
           if (o < 0) return false;
         }
         if (retireAge >= preservationAge) {
@@ -986,10 +1079,10 @@
         // Bridge phase: outside funds full spending until preservation
         for (let a = retireAge; a < preservationAge; a++) {
           const purchase = purchaseRealAtAge(a);
-          if (purchase > 0) o = o - purchase;
+          if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper);
-          o = o * (1 + realRetOut) - annualSpending;
+          o = o * (1 + realRetOut) - grossUp(annualSpending);
           if (o < 0) return false;
         }
         return (s + o) >= fireNumber;
@@ -1003,7 +1096,7 @@
           if (canCoastAt(age, sS, sO, retireAge)) return age;
           // Save another year (full saving phase, NOT coasting yet)
           const purchase = purchaseRealAtAge(age);
-          if (purchase > 0) sO = Math.max(0, sO - purchase);
+          if (purchase > 0) sO = Math.max(0, sO - grossUp(purchase));
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           sS = sS * (1 + realRetSuper) + c.netSuperContrib;
           sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
@@ -1036,7 +1129,7 @@
         // Phase 1: full-time work, currentAge → downshiftAge − 1
         for (let age = currentAge; age < downshiftAge; age++) {
           const purchase = purchaseRealAtAge(age);
-          if (purchase > 0) o = o - purchase;
+          if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return null;
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           s = s * (1 + realRetSuper) + c.netSuperContrib;
@@ -1045,10 +1138,10 @@
         // Phase 2: barista, downshiftAge → targetRetireAge − 1
         for (let age = downshiftAge; age < targetRetireAge; age++) {
           const purchase = purchaseRealAtAge(age);
-          if (purchase > 0) o = o - purchase;
+          if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return null;
           s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
-          o = o * (1 + realRetOut) - baristaSpendingGap;
+          o = o * (1 + realRetOut) - grossUp(baristaSpendingGap);
           if (o < 0) return null; // outside ran out during barista years
         }
         return { s, o };
@@ -1063,10 +1156,10 @@
         let s = sAtRet, o = oAtRet;
         for (let age = targetRetireAge; age < preservationAge; age++) {
           const purchase = purchaseRealAtAge(age);
-          if (purchase > 0) o = o - purchase;
+          if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper);
-          o = o * (1 + realRetOut) - annualSpending;
+          o = o * (1 + realRetOut) - grossUp(annualSpending);
           if (o < 0) return false;
         }
         // At preservation, super alone must support spending at SWR
@@ -1092,10 +1185,10 @@
         }
         for (let a = retireAge; a < preservationAge; a++) {
           const purchase = purchaseRealAtAge(a);
-          if (purchase > 0) o = o - purchase;
+          if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper);
-          o = o * (1 + realRetOut) - annualSpending;
+          o = o * (1 + realRetOut) - grossUp(annualSpending);
           if (o < 0) return false;
         }
         return (s + o) >= fireNumber;
@@ -1105,7 +1198,7 @@
         for (let age = currentAge; age <= 100; age++) {
           if (canFullyRetireAt(age, sS, sO)) return age;
           const purchase = purchaseRealAtAge(age);
-          if (purchase > 0) sO = Math.max(0, sO - purchase);
+          if (purchase > 0) sO = Math.max(0, sO - grossUp(purchase));
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           sS = sS * (1 + realRetSuper) + c.netSuperContrib;
           sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
@@ -1148,25 +1241,25 @@
             total: Math.round(pSuper + pOutside),
           });
           if (age < maxAge) {
-            // Purchase at this age — outside (pre-pres) or super (post-pres)
+            // Purchase at this age — outside (pre-pres, grossed-up for CGT) or super (post-pres, tax-free)
             const purchase = purchaseRealAtAge(age);
             if (purchase > 0) {
               if (age >= preservationAge) pSuper = Math.max(0, pSuper - purchase);
-              else pOutside = Math.max(0, pOutside - purchase);
+              else pOutside = Math.max(0, pOutside - grossUp(purchase));
             }
             if (downshiftAge != null && age >= downshiftAge && age < targetRetireAge) {
-              // Coast/Barista phase: SG flows in, outside funds spending gap
+              // Coast/Barista phase: SG flows in, outside funds spending gap (grossed up)
               pSuper = pSuper * (1 + realRetSuper) + downshiftSGNet;
-              pOutside = Math.max(0, pOutside * (1 + realRetOut) - downshiftGap);
+              pOutside = Math.max(0, pOutside * (1 + realRetOut) - grossUp(downshiftGap));
             } else if (age < targetRetireAge) {
               // Full-time saving phase
               const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
               pSuper = pSuper * (1 + realRetSuper) + c.netSuperContrib;
               pOutside = pOutside * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
             } else if (age < preservationAge) {
-              // Retired, pre-preservation: drawdown from outside
+              // Retired, pre-preservation: drawdown from outside (grossed up for CGT)
               pSuper = pSuper * (1 + realRetSuper);
-              pOutside = Math.max(0, pOutside * (1 + realRetOut) - annualSpending);
+              pOutside = Math.max(0, pOutside * (1 + realRetOut) - grossUp(annualSpending));
             } else {
               // Post-preservation: drawdown from super (pension phase, tax-free)
               pSuper = Math.max(0, pSuper * (1 + realRetSuperPension) - annualSpending);
@@ -1220,7 +1313,7 @@
         let s = superBalance, o = outsideBalance;
         for (let age = currentAge; age < baristaAge; age++) {
           const purchase = purchaseRealAtAge(age);
-          if (purchase > 0) o = Math.max(0, o - purchase);
+          if (purchase > 0) o = Math.max(0, o - grossUp(purchase));
           const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
           s = s * (1 + realRetSuper) + c.netSuperContrib;
           o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
@@ -1228,9 +1321,9 @@
         baristaPortfolioAtDownshift = s + o;
         for (let age = baristaAge; age < targetRetireAge; age++) {
           const purchase = purchaseRealAtAge(age);
-          if (purchase > 0) o = Math.max(0, o - purchase);
+          if (purchase > 0) o = Math.max(0, o - grossUp(purchase));
           s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
-          o = Math.max(0, o * (1 + realRetOut) - baristaSpendingGap);
+          o = Math.max(0, o * (1 + realRetOut) - grossUp(baristaSpendingGap));
         }
         baristaPortfolioAtRetire = s + o;
       }
