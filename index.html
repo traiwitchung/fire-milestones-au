@@ -17,7 +17,11 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
   <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Pinned to Babel 7: its react preset defaults to the classic React.createElement
+       runtime. Unpinned "latest" now serves Babel 8, whose react preset defaults to the
+       automatic runtime and injects `import {jsx} from "react/jsx-runtime"` — illegal in a
+       classic in-browser script (React here is a UMD global), which kills the whole app. -->
+  <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet" />
   <style>
