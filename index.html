@@ -270,6 +270,7 @@
     const MS_DEFAULTS = {
       coastJobIncome: 50000,
       baristaIncome: 40000,
+      coastStartAge: 0, // 0 = auto (start coasting at the earliest qualifying age). >0 = delay coasting to this age.
       purchases: [], // [{ id, label, age, amount }] — amount is in NOMINAL future dollars at that age
     };
 
@@ -389,6 +390,7 @@
       // Milestone-specific
       const [coastJobIncome, setCoastJobIncome] = useState(msSaved.coastJobIncome);
       const [baristaIncome, setBaristaIncome] = useState(msSaved.baristaIncome);
+      const [coastStartAge, setCoastStartAge] = useState(msSaved.coastStartAge || 0);
       const [purchases, setPurchases] = useState(() =>
         (msSaved.purchases || []).map(p => ({ ...p, id: p.id || Date.now() + Math.random() }))
       );
@@ -414,7 +416,7 @@
         superEarningsTax, annualSpending,
         minCgtRate, realizedGainShare,
       };
-      const msInputs = { coastJobIncome, baristaIncome, purchases };
+      const msInputs = { coastJobIncome, baristaIncome, coastStartAge, purchases };
       const fireRef = useRef(fireInputs); fireRef.current = fireInputs;
       const msRef = useRef(msInputs); msRef.current = msInputs;
 
@@ -437,14 +439,14 @@
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        coastJobIncome, baristaIncome, purchases,
+        coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
       }), [
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        coastJobIncome, baristaIncome, purchases,
+        coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
       ]);
 
@@ -468,7 +470,7 @@
         projectionMode === "barista" && results.barista.atAge != null ? results.projectionBarista :
         results.projection;
       const downshiftAge =
-        projectionMode === "coast" ? results.coastRetire.atAge :
+        projectionMode === "coast" ? results.coastDownshiftAge :
         projectionMode === "barista" ? results.barista.atAge : null;
 
       return (
@@ -541,6 +543,13 @@
               <SectionHeader>Coast Phase Job</SectionHeader>
               <SliderInput label="Coast Job Income (gross)" value={coastJobIncome} onChange={setCoastJobIncome} min={0} max={200000} step={2000} format="currency"
                 helpText="During Coast FIRE you cover expenses with this. Its SG contributions still flow into super." />
+              {results.coastRetire.atAge != null && results.coastRetire.atAge < targetRetireAge && (
+                <SliderInput label="Coast Start Age"
+                  value={Math.min(targetRetireAge, Math.max(results.coastRetire.atAge, coastStartAge || results.coastRetire.atAge))}
+                  onChange={setCoastStartAge}
+                  min={results.coastRetire.atAge} max={targetRetireAge} step={1} suffix=" yrs"
+                  helpText={`Earliest you can coast is ${results.coastRetire.atAge}. Push this later to keep investing full-time first — your net worth at ${targetRetireAge} grows.`} />
+              )}
 
               <SectionHeader>Barista FIRE</SectionHeader>
               <SliderInput label="Barista Income (gross)" value={baristaIncome} onChange={setBaristaIncome} min={0} max={150000} step={2000} format="currency"
@@ -845,7 +854,9 @@
                     <>Save full-time until age {targetRetireAge}, then fully retire. Outside funds the bridge to preservation age.</>
                   )}
                   {projectionMode === "coast" && results.coastRetire.atAge != null && (
-                    <>Save full-time until age {results.coastRetire.atAge}, then downshift to coast job until age {targetRetireAge}, then fully retire.</>
+                    <>Save full-time until age {results.coastDownshiftAge}, then downshift to coast job until age {targetRetireAge}, then fully retire.{" "}
+                    {results.coastDownshiftAge > results.coastRetire.atAge && <>(Earliest you could coast is {results.coastRetire.atAge}.) </>}
+                    Net worth at {targetRetireAge}: <strong style={{ color: T.green }}>{fmt(results.coastProjectedAtRetire)}</strong>.</>
                   )}
                   {projectionMode === "coast" && results.coastRetire.atAge == null && (
                     <>Coast FIRE not reachable with current inputs — showing Full FIRE trajectory.</>
@@ -1020,7 +1031,7 @@
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
         returnRate, inflationRate, sgRate, swr, superEarningsTax,
-        coastJobIncome, baristaIncome, purchases,
+        coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
       } = opts;
 
@@ -1233,6 +1244,13 @@
       const baristaAge = findBaristaAge();
       const fullFireAge = findFullFireAge();
 
+      // Coast downshift age the projection actually uses. Defaults to the earliest
+      // qualifying age (coastRetireAge), but the user can DELAY it via coastStartAge to
+      // keep saving full-time for more years before coasting — which grows net worth.
+      // 0/blank means "auto = earliest". Clamped to [earliest, targetRetireAge].
+      const effectiveCoastStart = coastRetireAge == null ? null
+        : Math.min(targetRetireAge, Math.max(coastRetireAge, coastStartAge || coastRetireAge));
+
       // ─── Projection builder (year-by-year for chart) ───
       // mode: 'full' | 'coast' | 'barista'
       // Adds a downshift phase between downshiftAge and targetRetireAge where you
@@ -1242,7 +1260,7 @@
       const buildProjection = (mode) => {
         let downshiftAge = null, downshiftSGNet = 0, downshiftGap = 0;
         if (mode === 'coast' && coastRetireAge != null) {
-          downshiftAge = coastRetireAge;
+          downshiftAge = effectiveCoastStart;
           downshiftSGNet = coastJobNetSuper;
           downshiftGap = coastJobGap;
         } else if (mode === 'barista' && baristaAge != null) {
@@ -1295,6 +1313,15 @@
       const projection = buildProjection('full');
       const projectionCoast = buildProjection('coast');
       const projectionBarista = buildProjection('barista');
+
+      // Net worth along the coast path at the target retirement age — i.e. what you'd
+      // have if you save full-time until effectiveCoastStart, then coast to retirement.
+      // Delaying the coast start pushes this number up (you accumulate more first).
+      let coastProjectedAtRetire = 0;
+      if (coastRetireAge != null) {
+        const e = projectionCoast.find(d => d.age === targetRetireAge);
+        if (e) coastProjectedAtRetire = e.total;
+      }
 
       // Projected portfolio at full FIRE age (from full projection)
       let fullFireProjected = 0;
@@ -1400,6 +1427,8 @@
         realRetOut: realRetOut * 100,
         realRetSuper: realRetSuper * 100,
         coastRetire, barista, fullFire,
+        coastDownshiftAge: effectiveCoastStart,
+        coastProjectedAtRetire,
         projection,
         projectionCoast,
         projectionBarista,
