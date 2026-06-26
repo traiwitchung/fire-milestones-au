@@ -473,18 +473,12 @@
         projectionMode === "coast" ? results.coastDownshiftAge :
         projectionMode === "barista" ? results.barista.atAge : null;
 
-      // In coast mode with a delayed start, overlay a second line: the total you'd have
-      // if you coasted at the EARLIEST age ("can coast") vs the chosen later start ("actual coast").
-      const showCoastCompare =
+      // In coast mode, when the coast start is delayed past the earliest qualifying age,
+      // mark BOTH on the chart with vertical lines: "can coast" (earliest) and the actual start.
+      const showCoastEarliestMarker =
         projectionMode === "coast" &&
         results.coastRetire.atAge != null &&
         results.coastDownshiftAge > results.coastRetire.atAge;
-      const earliestByAge = showCoastCompare
-        ? Object.fromEntries(results.projectionCoastEarliest.map(d => [d.age, d.total]))
-        : null;
-      const chartData = activeProjection
-        .filter(d => d.age <= chartEndAge)
-        .map(d => showCoastCompare ? { ...d, coastEarliest: earliestByAge[d.age] } : d);
 
       return (
         <div style={{
@@ -882,7 +876,7 @@
                   )}
                 </div>
                 <ResponsiveContainer width="100%" height={isMobile ? 320 : 460}>
-                  <ComposedChart data={chartData} margin={{ top: 20, right: 72, left: 20, bottom: 5 }}>
+                  <ComposedChart data={activeProjection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 72, left: 20, bottom: 5 }}>
                     <defs>
                       <linearGradient id="msSuperGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#818cf8" stopOpacity={0.6} />
@@ -899,12 +893,7 @@
                     <Tooltip content={<CustomTooltip />} />
                     <Area type="monotone" dataKey="outside" stackId="nw" stroke="#2dd4bf" fill="url(#msOutsideGrad)" strokeWidth={1.5} name="Outside-Super" />
                     <Area type="monotone" dataKey="super" stackId="nw" stroke="#818cf8" fill="url(#msSuperGrad)" strokeWidth={1.5} name="Super" />
-                    <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false}
-                      name={showCoastCompare ? `Actual coast (start ${results.coastDownshiftAge})` : "Total Portfolio"} />
-                    {showCoastCompare && (
-                      <Line type="monotone" dataKey="coastEarliest" stroke={T.green} strokeWidth={2} strokeDasharray="5 4" dot={false}
-                        name={`Earliest coast (start ${results.coastRetire.atAge})`} />
-                    )}
+                    <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false} name="Total Portfolio" />
                     {/* Horizontal FIRE number — always shown */}
                     <ReferenceLine y={results.fireNumber} stroke={T.accent} strokeDasharray="6 4" strokeOpacity={0.7}
                       label={{ value: "FIRE", fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
@@ -913,9 +902,15 @@
                       <ReferenceLine x={results.fullFire.atAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
                         label={{ value: `Full FIRE`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 12 }} />
                     )}
+                    {/* Earliest age you COULD coast ("can coast") — only when actual start is delayed */}
+                    {showCoastEarliestMarker && (
+                      <ReferenceLine x={results.coastRetire.atAge} stroke={T.textMid} strokeDasharray="3 3" strokeOpacity={0.5}
+                        label={{ value: `Can coast ${results.coastRetire.atAge}`, position: "insideTopLeft", fill: T.textMid, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {/* Actual coast start (chosen) */}
                     {projectionMode === "coast" && downshiftAge != null && (
                       <ReferenceLine x={downshiftAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.6}
-                        label={{ value: `Coast →`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                        label={{ value: showCoastEarliestMarker ? `Coast ${downshiftAge}` : `Coast →`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: 12 }} />
                     )}
                     {projectionMode === "barista" && downshiftAge != null && (
                       <ReferenceLine x={downshiftAge} stroke={T.accent} strokeDasharray="3 3" strokeOpacity={0.6}
@@ -1275,10 +1270,10 @@
       // work the coast/barista job (no voluntary super, no monthly outside saving;
       // the job's SG flows into super; spending gap drawn from outside).
       const currentYear = new Date().getFullYear();
-      const buildProjection = (mode, coastDownshiftOverride) => {
+      const buildProjection = (mode) => {
         let downshiftAge = null, downshiftSGNet = 0, downshiftGap = 0;
         if (mode === 'coast' && coastRetireAge != null) {
-          downshiftAge = coastDownshiftOverride != null ? coastDownshiftOverride : effectiveCoastStart;
+          downshiftAge = effectiveCoastStart;
           downshiftSGNet = coastJobNetSuper;
           downshiftGap = coastJobGap;
         } else if (mode === 'barista' && baristaAge != null) {
@@ -1331,11 +1326,6 @@
       const projection = buildProjection('full');
       const projectionCoast = buildProjection('coast');
       const projectionBarista = buildProjection('barista');
-
-      // Second coast line: the path if you coasted at the EARLIEST qualifying age, so
-      // the chart can overlay "can coast (earliest)" vs "actual coast (chosen start)".
-      const projectionCoastEarliest = coastRetireAge == null ? projectionCoast
-        : buildProjection('coast', coastRetireAge);
 
       // Net worth along the coast path at the target retirement age — i.e. what you'd
       // have if you save full-time until effectiveCoastStart, then coast to retirement.
@@ -1454,7 +1444,6 @@
         coastProjectedAtRetire,
         projection,
         projectionCoast,
-        projectionCoastEarliest,
         projectionBarista,
       };
     }
