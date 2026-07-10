@@ -123,8 +123,11 @@
       const handleStartEdit = () => { setEditText(String(value)); setIsEditing(true); };
       const handleCommit = () => {
         setIsEditing(false);
-        const parsed = parseFloat(editText);
-        if (!isNaN(parsed) && parsed >= 0) onChange(parsed);
+        // Accept "$1,200", "80k", "1.2m" — then clamp to the slider's valid range
+        const cleaned = editText.trim().toLowerCase().replace(/[$,\s]/g, "");
+        const mult = cleaned.endsWith("m") ? 1e6 : cleaned.endsWith("k") ? 1e3 : 1;
+        const parsed = parseFloat(mult === 1 ? cleaned : cleaned.slice(0, -1)) * mult;
+        if (!isNaN(parsed)) onChange(Math.min(max, Math.max(min, parsed)));
       };
       const handleKeyDown = (e) => {
         if (e.key === "Enter") handleCommit();
@@ -176,7 +179,7 @@
       }}>{children}</div>
     );
 
-    const StatCard = ({ label, value, sub, color }) => (
+    const StatCard = ({ label, value, sub, color, progress }) => (
       <div className="ms-stat-card" style={{
         background: T.panelBg, border: `1px solid ${T.panelBorder}`,
         borderRadius: 10, padding: "14px 16px", flex: 1, minWidth: 130,
@@ -184,8 +187,38 @@
         <div style={{ fontSize: 10, color: "#6b7c90", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
         <div style={{ fontSize: 22, fontWeight: 700, color: color || T.text, ...mono }}>{value}</div>
         {sub && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>{sub}</div>}
+        {progress != null && (
+          <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%`, height: "100%", borderRadius: 2, background: color || T.accent, transition: "width 0.3s" }} />
+          </div>
+        )}
       </div>
     );
+
+    // Collapsible input group — header toggles; collapsed sections show a one-line summary
+    const Section = ({ title, summary, defaultOpen = true, children }) => {
+      const [open, setOpen] = useState(defaultOpen);
+      return (
+        <div>
+          <div onClick={() => setOpen(o => !o)} title={open ? "Collapse" : "Expand"}
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8,
+              fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em",
+              color: T.accent, marginBottom: open ? 12 : 4, marginTop: 22, paddingBottom: 6,
+              borderBottom: `1px solid ${T.accentBorder}`, fontFamily: "'DM Sans', sans-serif",
+              cursor: "pointer", userSelect: "none",
+            }}>
+            <span>{title}</span>
+            <span style={{ fontSize: 9, color: T.textDim, display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
+          </div>
+          {!open && summary && (
+            <div onClick={() => setOpen(true)}
+              style={{ fontSize: 11, color: T.textDim, marginBottom: 4, cursor: "pointer", fontStyle: "italic", lineHeight: 1.5 }}>{summary}</div>
+          )}
+          <div style={{ display: open ? "block" : "none" }}>{children}</div>
+        </div>
+      );
+    };
 
     const CustomTooltip = ({ active, payload, label }) => {
       if (!active || !payload || !payload.length) return null;
@@ -205,7 +238,7 @@
       );
     };
 
-    // ─── Australian Tax (2024-25) ───
+    // ─── Australian Tax (2025-26 resident rates, incl. LITO + Medicare levy shade-in) ───
     const incomeTaxBrackets = [
       { min: 0, max: 18200, rate: 0 },
       { min: 18200, max: 45000, rate: 0.16 },
@@ -214,12 +247,22 @@
       { min: 190000, max: Infinity, rate: 0.45 },
     ];
     function calcIncomeTax(taxableIncome) {
+      const ti = Math.max(0, taxableIncome);
       let tax = 0;
       for (const b of incomeTaxBrackets) {
-        if (taxableIncome <= b.min) break;
-        tax += (Math.min(taxableIncome, b.max) - b.min) * b.rate;
+        if (ti <= b.min) break;
+        tax += (Math.min(ti, b.max) - b.min) * b.rate;
       }
-      return tax + taxableIncome * 0.02; // + Medicare
+      // Low Income Tax Offset — matters for coast/barista phase incomes
+      let lito = 0;
+      if (ti <= 37500) lito = 700;
+      else if (ti <= 45000) lito = 700 - (ti - 37500) * 0.05;
+      else if (ti <= 66667) lito = 325 - (ti - 45000) * 0.015;
+      tax = Math.max(0, tax - Math.max(0, lito));
+      // Medicare levy: nil below the low-income threshold, 10% shade-in, then flat 2%
+      const levyThreshold = 27222;
+      const levy = ti <= levyThreshold ? 0 : Math.min(ti * 0.02, (ti - levyThreshold) * 0.10);
+      return tax + levy;
     }
 
     function calcYearContribs(salary, sg, voluntaryPerMonth, concessionalCap) {
@@ -322,6 +365,7 @@
         ["Nominal Return (%)", inputs.returnRate],
         ["Inflation (%)", inputs.inflationRate],
         ["SG Rate (%)", inputs.sgRate],
+        ["Real Salary Growth (%)", inputs.salaryGrowthRate || 0],
         ["Super Earnings Tax (%)", inputs.superEarningsTax],
         ["SWR (%)", inputs.swr],
         ["", ""],
@@ -384,6 +428,7 @@
       const [sgRate, setSgRate] = useState(fireSaved.sgRate);
       const [swr, setSwr] = useState(fireSaved.swr);
       const [superEarningsTax, setSuperEarningsTax] = useState(fireSaved.superEarningsTax);
+      const [salaryGrowthRate, setSalaryGrowthRate] = useState(fireSaved.salaryGrowthRate || 0);
       const [minCgtRate, setMinCgtRate] = useState(fireSaved.minCgtRate);
       const [realizedGainShare, setRealizedGainShare] = useState(fireSaved.realizedGainShare);
 
@@ -413,7 +458,7 @@
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving,
         returnRate, inflationRate, sgRate, swr,
-        superEarningsTax, annualSpending,
+        superEarningsTax, annualSpending, salaryGrowthRate,
         minCgtRate, realizedGainShare,
       };
       const msInputs = { coastJobIncome, baristaIncome, coastStartAge, purchases };
@@ -438,14 +483,14 @@
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
-        returnRate, inflationRate, sgRate, swr, superEarningsTax,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
         coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
       }), [
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
-        returnRate, inflationRate, sgRate, swr, superEarningsTax,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
         coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
       ]);
@@ -456,6 +501,12 @@
       const effectiveCgtDrag = (minCgtRate / 100) * (realizedGainShare / 100);
       const grossWithdrawal = annualSpending / Math.max(1e-9, 1 - effectiveCgtDrag);
       const cgtTaxBite = grossWithdrawal - annualSpending;
+
+      // Cash-flow sanity: can this salary actually fund spending + planned saving?
+      const superSacrifice = voluntarySuper * 12;
+      const takeHome = annualSalary - superSacrifice - calcIncomeTax(Math.max(0, annualSalary - superSacrifice));
+      const cashflowShort = annualSalary > 0
+        ? Math.max(0, annualSpending + monthlySaving * 12 - takeHome) : 0;
 
       const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
       const [projectionMode, setProjectionMode] = useState("full");
@@ -510,9 +561,10 @@
               </div>
             </div>
             <p style={{ fontSize: 13, color: "#4a5b6d", margin: "6px 0 0", maxWidth: 720, lineHeight: 1.5 }}>
-              Your snapshot across 4 FIRE milestones, AU-aware. Each milestone properly accounts for super
-              being locked until preservation age, bridge fund needs for early retirement, and SG contributions
-              from coast/barista jobs. Inputs sync with FIRE Suite via localStorage.
+              Set your numbers in the panel — the milestone cards show when you get to Coast, Barista and Full FIRE,
+              and tapping a card shows its trajectory on the chart. AU-aware: super stays locked until preservation age,
+              early retirement needs a bridge fund, and coast/barista jobs keep paying SG into super.
+              Everything stays on this device.
             </p>
           </div>
 
@@ -524,30 +576,46 @@
             flexDirection: isMobile ? "column" : "row", flexWrap: "wrap",
           }}>
             {/* ──── LEFT PANEL ──── */}
-            <div style={{
+            <div id="inputs-panel" style={{
               width: isMobile ? "100%" : 310, minWidth: isMobile ? 0 : 280, flexShrink: 0,
               order: isMobile ? 2 : 0,
               background: T.panelBg, border: "1px solid rgba(255,255,255,0.05)",
               borderRadius: 14, padding: "4px 20px 24px",
             }}>
-              <SectionHeader>Personal</SectionHeader>
+              <Section title="Personal">
               <SliderInput label="Current Age" value={currentAge} onChange={setCurrentAge} min={18} max={65} step={1} suffix=" yrs" />
               <SliderInput label="Target Retirement Age" value={targetRetireAge} onChange={setTargetRetireAge} min={Math.max(currentAge + 1, 30)} max={75} step={1} suffix=" yrs" helpText="Full FIRE target" />
               <SliderInput label="Preservation Age" value={preservationAge} onChange={setPreservationAge} min={55} max={65} step={1} suffix=" yrs" />
 
-              <SectionHeader>Balances</SectionHeader>
+              </Section>
+              <Section title="Balances">
               <SliderInput label="Super Balance" value={superBalance} onChange={setSuperBalance} min={0} max={2000000} step={5000} format="currency" />
               <SliderInput label="Outside-Super" value={outsideBalance} onChange={setOutsideBalance} min={0} max={2000000} step={5000} format="currency" />
 
-              <SectionHeader>Income & Saving</SectionHeader>
+              </Section>
+              <Section title="Income & Saving">
               <SliderInput label="Annual Salary (gross)" value={annualSalary} onChange={setAnnualSalary} min={0} max={400000} step={5000} format="currency" />
+              <SliderInput label="Real Salary Growth" value={salaryGrowthRate} onChange={setSalaryGrowthRate} min={0} max={5} step={0.25} format="percent"
+                helpText="Growth above inflation (promotions, career progression). Coast/barista incomes stay flat." />
               <SliderInput label="Voluntary Super (monthly)" value={voluntarySuper} onChange={setVoluntarySuper} min={0} max={5000} step={50} format="currency" />
               <SliderInput label="Monthly Outside Saving" value={monthlySaving} onChange={setMonthlySaving} min={0} max={15000} step={100} format="currency" />
 
-              <SectionHeader>Spending</SectionHeader>
+              </Section>
+              <Section title="Spending">
               <SliderInput label="Annual Spending (today's $)" value={annualSpending} onChange={setAnnualSpending} min={20000} max={200000} step={1000} format="currency" />
+              {cashflowShort > 0 && (
+                <div style={{
+                  fontSize: 11, color: T.red, lineHeight: 1.5, padding: "8px 10px",
+                  background: "rgba(207,110,110,0.08)", border: "1px solid rgba(207,110,110,0.25)",
+                  borderRadius: 6, marginTop: -6, marginBottom: 12,
+                }}>
+                  ⚠ Spending + saving exceeds estimated take-home pay ({fmt(takeHome)}/yr after tax &amp; super sacrifice)
+                  by <strong>{fmt(cashflowShort)}/yr</strong>. Lower one of them, or the plan assumes money you don't have.
+                </div>
+              )}
 
-              <SectionHeader>Coast Phase Job</SectionHeader>
+              </Section>
+              <Section title="Coast Phase Job">
               <SliderInput label="Coast Job Income (gross)" value={coastJobIncome} onChange={setCoastJobIncome} min={0} max={200000} step={2000} format="currency"
                 helpText="During Coast FIRE you cover expenses with this. Its SG contributions still flow into super." />
               {results.coastRetire.atAge != null && results.coastRetire.atAge < targetRetireAge && (
@@ -558,11 +626,14 @@
                   helpText={`Earliest you can coast is ${results.coastRetire.atAge}. Push this later to keep investing full-time first — your net worth at ${targetRetireAge} grows.`} />
               )}
 
-              <SectionHeader>Barista FIRE</SectionHeader>
+              </Section>
+              <Section title="Barista FIRE">
               <SliderInput label="Barista Income (gross)" value={baristaIncome} onChange={setBaristaIncome} min={0} max={150000} step={2000} format="currency"
                 helpText="Part-time income that offsets some spending — portfolio fills the gap." />
 
-              <SectionHeader>Big Purchases</SectionHeader>
+              </Section>
+              <Section title="Big Purchases" defaultOpen={purchases.length > 0}
+                summary={purchases.length === 0 ? "None — tap to add a house deposit, car, reno…" : undefined}>
               <div style={{ fontSize: 11, color: T.textDim, marginBottom: 10, fontStyle: "italic", lineHeight: 1.5 }}>
                 One-off lump sums (house deposit, car, reno). Amount is in <strong style={{ color: T.textMid }}>future $ at that age</strong> — we deflate to today's $ before applying.
               </div>
@@ -623,7 +694,9 @@
                   fontFamily: "'DM Sans', sans-serif",
                 }}>+ Add Purchase</button>
 
-              <SectionHeader>Assumptions</SectionHeader>
+              </Section>
+              <Section title="Assumptions & Tax" defaultOpen={false}
+                summary={`Return ${returnRate}% · Inflation ${inflationRate}% · SG ${sgRate}% · SWR ${swr}% — tap to adjust`}>
               <SliderInput label="Nominal Return" value={returnRate} onChange={setReturnRate} min={3} max={12} step={0.5} format="percent" />
               <SliderInput label="Inflation" value={inflationRate} onChange={setInflationRate} min={1} max={6} step={0.5} format="percent" />
               <SliderInput label="SG Rate" value={sgRate} onChange={setSgRate} min={9} max={15} step={0.5} format="percent" />
@@ -633,6 +706,7 @@
               <SliderInput label="Realized Gain Share" value={realizedGainShare} onChange={setRealizedGainShare} min={0} max={100} step={5} format="percent"
                 helpText={`% of each withdrawal treated as taxable gain. 100% = $100k out → $${(minCgtRate * 1000).toLocaleString()} tax → $${(100000 - minCgtRate * 1000).toLocaleString()} net. Effective drag: ${(effectiveCgtDrag * 100).toFixed(1)}%.`} />
               <SliderInput label="Safe Withdrawal Rate" value={swr} onChange={setSwr} min={2.5} max={6} step={0.25} format="percent" />
+              </Section>
 
               <div style={{
                 marginTop: 20, padding: "10px 12px", borderRadius: 8,
@@ -642,6 +716,19 @@
                 <strong style={{ color: T.accent }}>Synced with FIRE Suite.</strong><br/>
                 Edits here update FIRE Suite's inputs (and vice-versa) via localStorage.
               </div>
+
+              <button onClick={() => {
+                if (confirm("Reset ALL inputs to defaults? This clears the saved FIRE inputs on this device (also shared with FIRE Suite).")) {
+                  localStorage.removeItem(FIRE_STORAGE_KEY);
+                  localStorage.removeItem(MS_STORAGE_KEY);
+                  location.reload();
+                }
+              }} style={{
+                width: "100%", marginTop: 12, padding: "8px 12px", borderRadius: 6,
+                background: "transparent", border: "1px solid rgba(207,110,110,0.25)",
+                color: T.textDim, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif",
+              }}>↺ Reset all inputs to defaults</button>
             </div>
 
             {/* ──── RIGHT PANEL ──── */}
@@ -649,10 +736,23 @@
 
               {/* Current Snapshot */}
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid, marginBottom: 10 }}>
-                  Current Snapshot
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
+                    Current Snapshot
+                  </div>
+                  {isMobile && (
+                    <button onClick={() => { const el = document.getElementById("inputs-panel"); if (el) el.scrollIntoView({ behavior: "smooth" }); }}
+                      style={{
+                        padding: "4px 12px", borderRadius: 999, cursor: "pointer",
+                        background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                        color: T.accent, fontSize: 11, fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+                      }}>⚙ Adjust inputs</button>
+                  )}
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <StatCard label="FIRE Progress" value={`${Math.min(999, Math.round((superBalance + outsideBalance) / results.fireNumber * 100))}%`}
+                    sub={`of ${fmt(results.fireNumber)} FIRE number`} color={T.accent}
+                    progress={(superBalance + outsideBalance) / results.fireNumber} />
                   <StatCard label="Portfolio (invested)" value={fmt(superBalance + outsideBalance)} sub="super + outside" color={T.text} />
                   <StatCard label="Annual Spending" value={fmt(annualSpending)} sub={`${swr}% SWR target`} color={T.purple} />
                   <StatCard label="Annual Investing" value={fmt(annualInvesting)} sub="contributions/yr" color={T.teal} />
@@ -741,9 +841,15 @@
                   FIRE Milestones
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
-                  <MilestoneCard milestone={results.coastRetire} pillBg={`${T.green}15`} pillBorder={`${T.green}40`} pillColor={T.green} currentYear={currentYear} currentAge={currentAge} />
-                  <MilestoneCard milestone={results.barista} pillBg={`${T.accent}15`} pillBorder={`${T.accent}40`} pillColor={T.accent} currentYear={currentYear} currentAge={currentAge} />
-                  <MilestoneCard milestone={results.fullFire} pillBg={`${T.indigo}15`} pillBorder={`${T.indigo}40`} pillColor={T.indigo} currentYear={currentYear} currentAge={currentAge} />
+                  <MilestoneCard milestone={results.coastRetire} pillBg={`${T.green}15`} pillBorder={`${T.green}40`} pillColor={T.green} currentYear={currentYear} currentAge={currentAge}
+                    currentPortfolio={superBalance + outsideBalance} active={projectionMode === "coast"}
+                    selectable={results.coastRetire.atAge != null} onSelect={() => setProjectionMode("coast")} />
+                  <MilestoneCard milestone={results.barista} pillBg={`${T.accent}15`} pillBorder={`${T.accent}40`} pillColor={T.accent} currentYear={currentYear} currentAge={currentAge}
+                    currentPortfolio={superBalance + outsideBalance} active={projectionMode === "barista"}
+                    selectable={results.barista.atAge != null} onSelect={() => setProjectionMode("barista")} />
+                  <MilestoneCard milestone={results.fullFire} pillBg={`${T.indigo}15`} pillBorder={`${T.indigo}40`} pillColor={T.indigo} currentYear={currentYear} currentAge={currentAge}
+                    currentPortfolio={superBalance + outsideBalance} active={projectionMode === "full"}
+                    selectable={true} onSelect={() => setProjectionMode("full")} />
                 </div>
               </div>
 
@@ -891,9 +997,12 @@
                     <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} />
                     <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} width={70} />
                     <Tooltip content={<CustomTooltip />} />
-                    <Area type="monotone" dataKey="outside" stackId="nw" stroke="#2dd4bf" fill="url(#msOutsideGrad)" strokeWidth={1.5} name="Outside-Super" />
-                    <Area type="monotone" dataKey="super" stackId="nw" stroke="#818cf8" fill="url(#msSuperGrad)" strokeWidth={1.5} name="Super" />
-                    <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false} name="Total Portfolio" />
+                    <Area type="monotone" dataKey="outside" stackId="nw" stroke="#2dd4bf" fill="url(#msOutsideGrad)" strokeWidth={1.5} name="Outside-Super" isAnimationActive={false} />
+                    <Area type="monotone" dataKey="super" stackId="nw" stroke="#818cf8" fill="url(#msSuperGrad)" strokeWidth={1.5} name="Super" isAnimationActive={false} />
+                    <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false} name="Total Portfolio" isAnimationActive={false} />
+                    {/* Today marker */}
+                    <ReferenceLine x={currentAge} stroke={T.teal} strokeOpacity={0.35}
+                      label={{ value: "Now", position: "insideTopLeft", fill: T.teal, fontSize: 9, fontWeight: 600, dy: 30 }} />
                     {/* Horizontal FIRE number — always shown */}
                     <ReferenceLine y={results.fireNumber} stroke={T.accent} strokeDasharray="6 4" strokeOpacity={0.7}
                       label={{ value: "FIRE", fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
@@ -964,6 +1073,8 @@
                 Starting portfolio {fmt(superBalance + outsideBalance)} ·
                 FIRE number = spending ÷ {swr}% SWR ·
                 Coast FIRE uses portfolio + ongoing SG only (no voluntary contributions) ·
+                Income tax: 2025-26 brackets + LITO + Medicare levy (low-income shade-in) ·
+                Concessional cap $30k{salaryGrowthRate > 0 ? ` · Real salary growth ${salaryGrowthRate}%/yr` : ""} ·
                 All figures in today's dollars · Projections are estimates, not guarantees.
               </div>
             </div>
@@ -975,17 +1086,25 @@
     // ══════════════════════════════════════════════════════════
     // ─── MILESTONE CARD COMPONENT ───
     // ══════════════════════════════════════════════════════════
-    function MilestoneCard({ milestone, pillBg, pillBorder, pillColor, currentYear, currentAge }) {
+    function MilestoneCard({ milestone, pillBg, pillBorder, pillColor, currentYear, currentAge, currentPortfolio, active, selectable, onSelect }) {
       const m = milestone;
       const isReady = m.atAge != null && m.atAge <= currentAge;
       const isFuture = m.atAge != null && m.atAge > currentAge;
       const isNever = m.atAge == null;
+      // Progress toward the portfolio needed at this milestone's trigger point
+      const progress = isReady ? 1
+        : (m.requiredPortfolio > 0 && currentPortfolio != null ? currentPortfolio / m.requiredPortfolio : null);
 
       return (
-        <div className="ms-card" style={{
-          background: T.panelBg, border: `1px solid ${T.panelBorder}`,
-          borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column",
-        }}>
+        <div className="ms-card"
+          onClick={selectable ? onSelect : undefined}
+          title={selectable ? "Show this trajectory on the chart" : undefined}
+          style={{
+            background: active ? `${pillColor}08` : T.panelBg,
+            border: `1px solid ${active ? `${pillColor}50` : T.panelBorder}`,
+            borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column",
+            cursor: selectable ? "pointer" : "default",
+          }}>
           <div style={{
             display: "inline-block", padding: "3px 10px", borderRadius: 12,
             background: pillBg, border: `1px solid ${pillBorder}`,
@@ -1028,9 +1147,32 @@
             </>
           )}
 
+          {progress != null && !isNever && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                <div style={{
+                  width: `${Math.min(100, Math.max(0, progress * 100))}%`, height: "100%",
+                  borderRadius: 3, background: pillColor, transition: "width 0.3s",
+                }} />
+              </div>
+              <div style={{ fontSize: 10, color: T.textDim, marginTop: 4, ...mono }}>
+                {Math.min(999, Math.round(progress * 100))}% of the {fmt(m.requiredPortfolio)} needed
+              </div>
+            </div>
+          )}
+
           <div style={{ fontSize: 11, color: T.textDim, marginTop: 12, lineHeight: 1.5 }}>
             {m.explanation}
           </div>
+
+          {selectable && (
+            <div style={{
+              fontSize: 10, fontWeight: 600, marginTop: "auto", paddingTop: 10,
+              color: active ? pillColor : T.textDark, letterSpacing: "0.04em",
+            }}>
+              {active ? "● shown on chart" : "view on chart →"}
+            </div>
+          )}
         </div>
       );
     }
@@ -1043,7 +1185,7 @@
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
         annualSalary, voluntarySuper, monthlySaving, annualSpending,
-        returnRate, inflationRate, sgRate, swr, superEarningsTax,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
         coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
       } = opts;
@@ -1066,6 +1208,12 @@
       const realRetSuperPension = (1 + nomRet) / (1 + infl) - 1;
       const annualOutsideSaving = monthlySaving * 12;
       const fireNumber = annualSpending / swrDec;
+
+      // Real salary growth (above inflation). Whole sim runs in today's $, so this is
+      // growth beyond CPI — promotions/career progression, not indexation.
+      // Coast/barista job incomes deliberately stay flat.
+      const salGrow = Math.max(0, salaryGrowthRate || 0) / 100;
+      const salaryAtAge = (age) => annualSalary * Math.pow(1 + salGrow, Math.max(0, age - currentAge));
 
       // ─── Purchases helper ───
       // User enters amount in NOMINAL future $ at the purchase age. The whole
@@ -1143,7 +1291,7 @@
           // Save another year (full saving phase, NOT coasting yet)
           const purchase = purchaseRealAtAge(age);
           if (purchase > 0) sO = Math.max(0, sO - grossUp(purchase));
-          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
           sS = sS * (1 + realRetSuper) + c.netSuperContrib;
           sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
         }
@@ -1177,7 +1325,7 @@
           const purchase = purchaseRealAtAge(age);
           if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return null;
-          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
           s = s * (1 + realRetSuper) + c.netSuperContrib;
           o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
         }
@@ -1245,7 +1393,7 @@
           if (canFullyRetireAt(age, sS, sO)) return age;
           const purchase = purchaseRealAtAge(age);
           if (purchase > 0) sO = Math.max(0, sO - grossUp(purchase));
-          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
           sS = sS * (1 + realRetSuper) + c.netSuperContrib;
           sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
         }
@@ -1306,7 +1454,7 @@
               pOutside = Math.max(0, pOutside * (1 + realRetOut) - grossUp(downshiftGap));
             } else if (age < targetRetireAge) {
               // Full-time saving phase
-              const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+              const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
               pSuper = pSuper * (1 + realRetSuper) + c.netSuperContrib;
               pOutside = pOutside * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
             } else if (age < preservationAge) {
@@ -1376,7 +1524,7 @@
         for (let age = currentAge; age < baristaAge; age++) {
           const purchase = purchaseRealAtAge(age);
           if (purchase > 0) o = Math.max(0, o - grossUp(purchase));
-          const c = calcYearContribs(annualSalary, sg, voluntarySuper, cap);
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
           s = s * (1 + realRetSuper) + c.netSuperContrib;
           o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
         }
