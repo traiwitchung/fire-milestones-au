@@ -113,7 +113,7 @@
     const mono = { fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 };
 
     // ─── Components ───
-    const SliderInput = ({ label, value, onChange, min, max, step, format, suffix, helpText }) => {
+    const SliderInput = ({ label, value, onChange, min, max, step, format, suffix, helpText, noMaxClamp }) => {
       const [isEditing, setIsEditing] = useState(false);
       const [editText, setEditText] = useState("");
       const prefix = format === "currency" ? "$" : "";
@@ -123,11 +123,14 @@
       const handleStartEdit = () => { setEditText(String(value)); setIsEditing(true); };
       const handleCommit = () => {
         setIsEditing(false);
-        // Accept "$1,200", "80k", "1.2m" — then clamp to the slider's valid range
+        // Accept "$1,200", "80k", "1.2m". Clamp to min; clamp to max unless noMaxClamp (uncapped).
         const cleaned = editText.trim().toLowerCase().replace(/[$,\s]/g, "");
         const mult = cleaned.endsWith("m") ? 1e6 : cleaned.endsWith("k") ? 1e3 : 1;
         const parsed = parseFloat(mult === 1 ? cleaned : cleaned.slice(0, -1)) * mult;
-        if (!isNaN(parsed)) onChange(Math.min(max, Math.max(min, parsed)));
+        if (!isNaN(parsed)) {
+          const lo = Math.max(min, parsed);
+          onChange(noMaxClamp ? lo : Math.min(max, lo));
+        }
       };
       const handleKeyDown = (e) => {
         if (e.key === "Enter") handleCommit();
@@ -163,9 +166,14 @@
               >{displayVal}</span>
             )}
           </div>
-          <input type="range" min={min} max={max} step={step} value={value}
+          <input type="range" min={min} max={noMaxClamp ? Math.max(max, value) : max} step={step} value={value}
             onChange={(e) => onChange(parseFloat(e.target.value))} style={{ width: "100%", accentColor: T.accent }}
           />
+          {noMaxClamp && value >= max && (
+            <div style={{ fontSize: 10, color: T.textDark, marginTop: 2, textAlign: "right", ...mono }}>
+              slider maxes at {format === "currency" ? fmt(max) : max}{format === "percent" ? "%" : ""} — click the value to type any amount
+            </div>
+          )}
           {helpText && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2, fontStyle: "italic" }}>{helpText}</div>}
         </div>
       );
@@ -616,7 +624,7 @@
 
               </Section>
               <Section title="Coast Phase Job">
-              <SliderInput label="Coast Job Income (gross)" value={coastJobIncome} onChange={setCoastJobIncome} min={0} max={200000} step={2000} format="currency"
+              <SliderInput label="Coast Job Income (gross)" value={coastJobIncome} onChange={setCoastJobIncome} min={0} max={200000} step={2000} format="currency" noMaxClamp
                 helpText="During Coast FIRE you cover expenses with this. Its SG contributions still flow into super." />
               {results.coastRetire.atAge != null && results.coastRetire.atAge < targetRetireAge && (
                 <SliderInput label="Coast Start Age"
@@ -628,7 +636,7 @@
 
               </Section>
               <Section title="Barista FIRE">
-              <SliderInput label="Barista Income (gross)" value={baristaIncome} onChange={setBaristaIncome} min={0} max={150000} step={2000} format="currency"
+              <SliderInput label="Barista Income (gross)" value={baristaIncome} onChange={setBaristaIncome} min={0} max={150000} step={2000} format="currency" noMaxClamp
                 helpText="Part-time income that offsets some spending — portfolio fills the gap." />
 
               </Section>
@@ -698,7 +706,8 @@
               <Section title="Assumptions & Tax" defaultOpen={false}
                 summary={`Return ${returnRate}% · Inflation ${inflationRate}% · SG ${sgRate}% · SWR ${swr}% — tap to adjust`}>
               <SliderInput label="Nominal Return" value={returnRate} onChange={setReturnRate} min={3} max={12} step={0.5} format="percent" />
-              <SliderInput label="Inflation" value={inflationRate} onChange={setInflationRate} min={1} max={6} step={0.5} format="percent" />
+              <SliderInput label="Inflation" value={inflationRate} onChange={setInflationRate} min={0} max={6} step={0.5} format="percent"
+                helpText="Set to 0% to read the projection as nominal future dollars (no discounting to today's $)." />
               <SliderInput label="SG Rate" value={sgRate} onChange={setSgRate} min={9} max={15} step={0.5} format="percent" />
               <SliderInput label="Super Earnings Tax" value={superEarningsTax} onChange={setSuperEarningsTax} min={0} max={30} step={1} format="percent" />
               <SliderInput label="Min CGT Rate" value={minCgtRate} onChange={setMinCgtRate} min={0} max={50} step={1} format="percent"
@@ -1011,27 +1020,29 @@
                       <ReferenceLine x={results.fullFire.atAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
                         label={{ value: `Full FIRE`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 12 }} />
                     )}
-                    {/* Earliest age you COULD coast ("can coast") — only when actual start is delayed */}
+                    {/* Earliest age you COULD coast ("can coast") — only when actual start is delayed.
+                        Label sits UPPER-LEFT so it never collides with the actual-coast label below-right. */}
                     {showCoastEarliestMarker && (
                       <ReferenceLine x={results.coastRetire.atAge} stroke={T.textMid} strokeDasharray="3 3" strokeOpacity={0.5}
                         label={{ value: `Can coast ${results.coastRetire.atAge}`, position: "insideTopLeft", fill: T.textMid, fontSize: 10, fontWeight: 600, dy: 12 }} />
                     )}
-                    {/* Actual coast start (chosen) */}
+                    {/* Actual coast start (chosen) — dropped to a lower level (dy 30) so it clears "Can coast" */}
                     {projectionMode === "coast" && downshiftAge != null && (
                       <ReferenceLine x={downshiftAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.6}
-                        label={{ value: showCoastEarliestMarker ? `Coast ${downshiftAge}` : `Coast →`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                        label={{ value: showCoastEarliestMarker ? `Coast ${downshiftAge}` : `Coast →`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: showCoastEarliestMarker ? 30 : 12 }} />
                     )}
                     {projectionMode === "barista" && downshiftAge != null && (
                       <ReferenceLine x={downshiftAge} stroke={T.accent} strokeDasharray="3 3" strokeOpacity={0.6}
                         label={{ value: `Barista →`, position: "insideTopRight", fill: T.accent, fontSize: 10, fontWeight: 600, dy: 12 }} />
                     )}
-                    {/* Retire marker (when in coast/barista mode, this is when full retirement starts) */}
+                    {/* Retire marker (when in coast/barista mode, this is when full retirement starts).
+                        In delayed-coast mode it drops another level to clear the actual-coast label. */}
                     {(projectionMode === "coast" || projectionMode === "barista") && downshiftAge != null && targetRetireAge !== downshiftAge && (
                       <ReferenceLine x={targetRetireAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
-                        label={{ value: `Retire ${targetRetireAge}`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 30 }} />
+                        label={{ value: `Retire ${targetRetireAge}`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: showCoastEarliestMarker ? 48 : 30 }} />
                     )}
                     <ReferenceLine x={preservationAge} stroke={T.textMid} strokeDasharray="2 4" strokeOpacity={0.3}
-                      label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: 48 }} />
+                      label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: showCoastEarliestMarker ? 64 : 48 }} />
                     {/* Big-purchase markers */}
                     {purchases.filter(p => p.amount > 0 && p.age >= currentAge && p.age <= chartEndAge).map(p => (
                       <ReferenceLine key={p.id} x={p.age} stroke={T.red} strokeDasharray="2 3" strokeOpacity={0.45}
@@ -1356,8 +1367,12 @@
           o = o * (1 + realRetOut) - grossUp(annualSpending);
           if (o < 0) return false;
         }
-        // At preservation, super alone must support spending at SWR
-        return s * swrDec >= annualSpending;
+        // At preservation, combined super + outside must support spending at SWR.
+        // (Consistent with the Full FIRE test — outside-super is still accessible after
+        // preservation, so it must count. Using super alone made Barista unreachable even
+        // with a large barista income, since SG is capped at the concessional cap and the
+        // income mostly builds OUTSIDE wealth.)
+        return (s + o) >= fireNumber;
       };
 
       const findBaristaAge = () => {
