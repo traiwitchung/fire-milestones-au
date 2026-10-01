@@ -1,0 +1,886 @@
+// Budget + Net worth — one tab of the Family Networth app. Wrapped in an IIFE so its helpers
+// don't collide with the other tabs; it shares only what it puts on window.
+(() => {
+    const { useState, useMemo, useEffect } = React;
+    const {
+      ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+      ResponsiveContainer, Legend,
+    } = Recharts;
+
+    // ══════════════════════════════════════════════════════════
+    // ─── SHARED HELPERS (copied from FIRE Milestones) ───
+    // ══════════════════════════════════════════════════════════
+
+    const fmt = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      const sign = v < 0 ? "-" : "";
+      const a = Math.abs(v);
+      if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(2)}M`;
+      if (a >= 1e4) return `${sign}$${(a / 1e3).toFixed(0)}k`;
+      if (a >= 1e3) return `${sign}$${(a / 1e3).toFixed(1)}k`;
+      return `${sign}$${Math.round(a).toLocaleString()}`;
+    };
+    const fmtFull = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      return `${v < 0 ? "-" : ""}$${Math.round(Math.abs(v)).toLocaleString()}`;
+    };
+    const fmtSigned = (v) => (v >= 0 ? "+" : "") + fmt(v);
+
+    const useIsMobile = (breakpoint = 768) => {
+      const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint);
+      useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < breakpoint);
+        window.addEventListener("resize", handler);
+        return () => window.removeEventListener("resize", handler);
+      }, [breakpoint]);
+      return isMobile;
+    };
+
+    const T = {
+      accent: "#d4a052", accentLight: "#e8c88a",
+      accentDim: "rgba(212,160,82,0.3)", accentBg: "rgba(212,160,82,0.08)",
+      accentBorder: "rgba(212,160,82,0.2)",
+      green: "#6ecf8e", red: "#cf6e6e", teal: "#5eead4",
+      indigo: "#a5b4fc", purple: "#c4a0e8", blue: "#52a0d4", emerald: "#34d399",
+      text: "#e8eff8", textMid: "#8a9bb0", textDim: "#5a6b7d", textDark: "#4a5568",
+      panelBg: "rgba(255,255,255,0.02)", panelBorder: "rgba(255,255,255,0.06)",
+    };
+    const mono = { fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 };
+
+    // Dates are stored ISO (YYYY-MM-DD) and shown as 2026AUG18.
+    const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const fmtDate = (iso) => {
+      if (!iso) return "—";
+      const [y, m, d] = iso.split("-");
+      return `${y}${MONTHS[+m - 1]}${d}`;
+    };
+    const todayISO = () => {
+      const d = new Date();
+      return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    };
+    const parseISO = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
+    const uid = () => Math.random().toString(36).slice(2, 10);
+    const sum = (arr) => arr.reduce((a, b) => a + b, 0);
+    const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
+
+    // Accept "1,200", "$80k", "1.2m"
+    const parseMoney = (s) => {
+      const c = String(s).trim().toLowerCase().replace(/[$,\s]/g, "");
+      if (c === "" || c === "-") return 0;
+      const mult = c.endsWith("m") ? 1e6 : c.endsWith("k") ? 1e3 : 1;
+      const n = parseFloat(mult === 1 ? c : c.slice(0, -1)) * mult;
+      return isNaN(n) ? null : n;
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // ─── DATA MODEL + STORAGE ───
+    // ══════════════════════════════════════════════════════════
+
+    const MONEY_KEY = "fire-money-au";
+    const FIRE_STORAGE_KEY = "fire-calc-au-inputs"; // read/written by FIRE Milestones
+
+    // Monthly multiplier for each frequency (52 weeks / 12 months = 4.33).
+    const FREQ = { week: 52 / 12, fortnight: 26 / 12, month: 1, quarter: 1 / 3, year: 1 / 12 };
+    const FREQ_LABEL = { week: "/ week", fortnight: "/ fortnight", month: "/ month", quarter: "/ quarter", year: "/ year" };
+    const toMonthly = (x) => num(x.amount) * (FREQ[x.freq] || 1);
+
+    // Account categories. Loans are liabilities; "fire" = counts as outside-super in FIRE by default.
+    const CATS = {
+      super:    { label: "Super",           color: "#818cf8", fire: true },
+      invest:   { label: "Investments",     color: "#2dd4bf", fire: true },
+      cash:     { label: "Cash / offset",   color: T.green,   fire: false },
+      property: { label: "Property",        color: T.purple,  fire: false },
+      other:    { label: "Other asset",     color: T.textMid, fire: false },
+      loan:     { label: "Loan / debt",     color: T.red,     fire: false },
+    };
+    const ASSET_CATS = ["super", "invest", "cash", "property", "other"];
+
+    const DEFAULT_MONEY = {
+      income: [
+        { id: "i1", label: "Take-home pay (after tax & salary sacrifice)", amount: 9000, freq: "month" },
+      ],
+      expenses: [
+        { id: "e1", group: "Housing", label: "Mortgage / rent", amount: 2000, freq: "month", retire: false },
+        { id: "e2", group: "Living", label: "Groceries", amount: 150, freq: "week", retire: true },
+        { id: "e3", group: "Living", label: "Eating out", amount: 80, freq: "week", retire: true },
+        { id: "e4", group: "Living", label: "Transport", amount: 40, freq: "week", retire: true },
+        { id: "e5", group: "Living", label: "Insurance", amount: 250, freq: "month", retire: true },
+        { id: "e6", group: "Living", label: "Subscriptions", amount: 100, freq: "month", retire: true },
+        { id: "e7", group: "Bills", label: "Utilities, strata & rates", amount: 500, freq: "month", retire: true },
+      ],
+      buckets: [
+        { id: "b1", label: "Invest — ETFs", amount: 2000, fire: true },
+        { id: "b2", label: "Offset / emergency fund", amount: 1000, fire: false },
+        { id: "b3", label: "Holidays", amount: 300, fire: false },
+      ],
+      accounts: [
+        { id: "a1", label: "Super", cat: "super", fire: true },
+        { id: "a2", label: "ETF portfolio", cat: "invest", fire: true },
+        { id: "a3", label: "Offset account", cat: "cash", fire: false, ef: true },
+        { id: "a4", label: "Home", cat: "property", fire: false },
+        { id: "a5", label: "Mortgage", cat: "loan", fire: false },
+      ],
+      snapshots: [], // [{ id, date: "YYYY-MM-DD", balances: { [accountId]: number } }]
+      efRungs: [3, 6, 12, 18, 24],
+      sync: { super: true, outside: true, saving: true, spending: true },
+      lastSync: null,
+    };
+
+    function loadMoney() {
+      try {
+        const raw = localStorage.getItem(MONEY_KEY);
+        if (raw) {
+          const stored = JSON.parse(raw);
+          const merged = { ...DEFAULT_MONEY, ...stored, sync: { ...DEFAULT_MONEY.sync, ...(stored.sync || {}) } };
+          for (const k of ["income", "expenses", "buckets", "accounts", "snapshots", "efRungs"]) {
+            if (!Array.isArray(merged[k])) merged[k] = DEFAULT_MONEY[k];
+          }
+          // Repair anything a hand-edited backup could break (unknown category, missing ids).
+          const withId = (x) => ({ ...x, id: x.id || uid() });
+          merged.income = merged.income.map(x => ({ freq: "month", ...withId(x) }));
+          merged.expenses = merged.expenses.map(x => ({ group: "Other", freq: "month", ...withId(x) }));
+          merged.buckets = merged.buckets.map(withId);
+          merged.accounts = merged.accounts.map(a => ({ ...withId(a), cat: CATS[a.cat] ? a.cat : "other" }));
+          merged.snapshots = merged.snapshots.filter(x => x && /^\d{4}-\d{2}-\d{2}$/.test(x.date)).map(x => ({ ...withId(x), balances: x.balances || {} }));
+          return merged;
+        }
+      } catch {}
+      return JSON.parse(JSON.stringify(DEFAULT_MONEY));
+    }
+    // Same defaults FIRE Milestones uses when it has nothing saved yet.
+    const FIRE_FALLBACK = { superBalance: 80000, outsideBalance: 40000, monthlySaving: 2000, annualSpending: 50000, swr: 4 };
+    function loadFire() {
+      try {
+        const raw = localStorage.getItem(FIRE_STORAGE_KEY);
+        if (raw) return { ...FIRE_FALLBACK, ...JSON.parse(raw) };
+      } catch {}
+      return { ...FIRE_FALLBACK };
+    }
+
+    // ─── Pure calculations (kept outside the component so they're testable) ───
+    function snapshotTotals(accounts, snap) {
+      const t = { super: 0, invest: 0, cash: 0, property: 0, other: 0, loan: 0, fireOutside: 0, ef: 0 };
+      if (snap) {
+        for (const a of accounts) {
+          const v = num(snap.balances[a.id]);
+          if (!(a.cat in t)) continue;
+          t[a.cat] += v;
+          if (a.fire && a.cat !== "super" && a.cat !== "loan") t.fireOutside += v;
+          if (a.ef && a.cat !== "loan") t.ef += v;
+        }
+      }
+      t.assets = sum(ASSET_CATS.map(c => t[c]));
+      t.nw = t.assets - t.loan;
+      return t;
+    }
+
+    function computeMoney(data) {
+      const incomeM = sum(data.income.map(toMonthly));
+      const expM = sum(data.expenses.map(toMonthly));
+      const retireSpendM = sum(data.expenses.filter(e => e.retire).map(toMonthly));
+      const bucketsM = sum(data.buckets.map(b => num(b.amount)));
+      const surplus = incomeM - expM;
+      const unallocated = surplus - bucketsM;
+      const savingRate = incomeM > 0 ? surplus / incomeM : 0;
+      const fireSavingM = sum(data.buckets.filter(b => b.fire).map(b => num(b.amount)));
+
+      const groups = [];
+      for (const e of data.expenses) if (!groups.includes(e.group)) groups.push(e.group);
+      const groupTotals = groups.map(g => ({ group: g, monthly: sum(data.expenses.filter(e => e.group === g).map(toMonthly)) }));
+
+      const snaps = [...data.snapshots].sort((a, b) => a.date.localeCompare(b.date));
+      const latest = snaps[snaps.length - 1] || null;
+      const prev = snaps[snaps.length - 2] || null;
+      const now = snapshotTotals(data.accounts, latest);
+      const before = snapshotTotals(data.accounts, prev);
+
+      // Actual vs planned change in net worth between the last two check-ins.
+      // "Planned" = the monthly surplus × months elapsed (ignores market moves and debt paydown).
+      let sinceLast = null;
+      if (latest && prev) {
+        const months = (parseISO(latest.date) - parseISO(prev.date)) / (1000 * 86400 * 30.44);
+        sinceLast = { months, actual: now.nw - before.nw, planned: surplus * months };
+      }
+      const runway = expM > 0 ? now.ef / expM : 0;
+
+      return {
+        incomeM, expM, retireSpendM, bucketsM, surplus, unallocated, savingRate, fireSavingM,
+        groups, groupTotals, snaps, latest, prev, now, before, sinceLast, runway,
+      };
+    }
+
+    // What Money would send to FIRE Milestones, and which of those differ from FIRE today.
+    function fireSync(data, m, fireInputs) {
+      const rows = [
+        { key: "super", label: "Super balance", field: "superBalance", value: Math.round(m.now.super),
+          note: "Super accounts at last check-in", needsSnap: true },
+        { key: "outside", label: "Outside-super balance", field: "outsideBalance", value: Math.round(m.now.fireOutside),
+          note: "Accounts marked “FIRE”", needsSnap: true },
+        { key: "saving", label: "Monthly outside saving", field: "monthlySaving", value: Math.round(m.fireSavingM),
+          note: "Allocations marked “FIRE”" },
+        { key: "spending", label: "Annual spending (today's $)", field: "annualSpending", value: Math.round(m.retireSpendM * 12),
+          note: "Expenses marked “in retirement” × 12" },
+      ].map(r => ({ ...r, available: !r.needsSnap || !!m.latest, current: num(fireInputs[r.field]) }));
+      const syncable = rows.filter(r => r.available && data.sync[r.key]);
+      return { rows, syncable, changes: syncable.filter(r => r.value !== r.current) };
+    }
+    function writeFireSync(rows) {
+      let existing = {};
+      try { existing = JSON.parse(localStorage.getItem(FIRE_STORAGE_KEY) || "{}"); } catch {}
+      const upd = Object.fromEntries(rows.map(r => [r.field, r.value]));
+      try { localStorage.setItem(FIRE_STORAGE_KEY, JSON.stringify({ ...existing, ...upd })); } catch {}
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── SMALL COMPONENTS ───
+    // ══════════════════════════════════════════════════════════
+
+    const inputBase = {
+      background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 6, padding: "6px 8px", fontSize: 13, color: T.text, outline: "none",
+      width: "100%", minWidth: 0, fontFamily: "'DM Sans', sans-serif",
+    };
+
+    const TextIn = ({ value, onChange, placeholder, style }) => (
+      <input className="mn-in" type="text" value={value} placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)} style={{ ...inputBase, ...style }} />
+    );
+
+    // Money input: shows "1,500"; accepts 80k / 1.2m / $1,200. While focused the typed text is kept
+    // as-is. Focus must NOT reformat the text — that would drop the select-all and make typing append.
+    const fmtInput = (v) => (num(v) ? num(v).toLocaleString("en-AU", { maximumFractionDigits: 2 }) : "");
+    const MoneyIn = ({ value, onChange, placeholder = "0", style }) => {
+      const [text, setText] = useState(null);
+      const shown = text != null ? text : fmtInput(value);
+      return (
+        <input className="mn-in" type="text" inputMode="decimal" value={shown} placeholder={placeholder}
+          onFocus={(e) => { setText(fmtInput(value)); e.target.select(); }}
+          onChange={(e) => {
+            setText(e.target.value);
+            const n = parseMoney(e.target.value);
+            if (n != null) onChange(n);
+          }}
+          onBlur={() => setText(null)}
+          style={{ ...inputBase, textAlign: "right", ...mono, fontWeight: 500, ...style }} />
+      );
+    };
+
+    const FreqSelect = ({ value, onChange }) => (
+      <select className="mn-in" value={value} onChange={(e) => onChange(e.target.value)}
+        style={{ ...inputBase, padding: "6px 4px", color: T.textMid, cursor: "pointer" }}>
+        {Object.keys(FREQ).map(f => <option key={f} value={f}>{FREQ_LABEL[f]}</option>)}
+      </select>
+    );
+
+    const XBtn = ({ onClick, title = "Remove" }) => (
+      <button className="mn-x" onClick={onClick} title={title} aria-label={title}
+        style={{
+          background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 6, padding: 0, height: 32, width: 28, cursor: "pointer",
+          color: T.textDim, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center",
+        }}>×</button>
+    );
+
+    // Small on/off pill, e.g. "in retirement" or "counts for FIRE"
+    const Chip = ({ on, onClick, children, color = T.accent, title }) => (
+      <button onClick={onClick} title={title}
+        style={{
+          padding: "2px 8px", borderRadius: 999, cursor: "pointer", fontSize: 10, fontWeight: 600,
+          letterSpacing: "0.03em", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap",
+          background: on ? `${color}18` : "transparent",
+          border: `1px solid ${on ? `${color}60` : "rgba(255,255,255,0.08)"}`,
+          color: on ? color : T.textDark,
+        }}>{on ? "✓ " : ""}{children}</button>
+    );
+
+    const AddBtn = ({ onClick, children }) => (
+      <button onClick={onClick}
+        style={{
+          width: "100%", background: "transparent",
+          border: "1px dashed rgba(255,255,255,0.15)", borderRadius: 6,
+          padding: "7px 12px", cursor: "pointer", color: T.textMid,
+          fontSize: 12, fontWeight: 600, marginTop: 6, fontFamily: "'DM Sans', sans-serif",
+        }}>{children}</button>
+    );
+
+    const Button = ({ onClick, children, primary, disabled, style }) => (
+      <button className={primary && !disabled ? "mn-btn" : undefined} onClick={onClick} disabled={disabled}
+        style={{
+          padding: "7px 16px", borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer",
+          background: primary ? T.accentBg : "transparent",
+          border: `1px solid ${primary ? T.accentDim : "rgba(255,255,255,0.12)"}`,
+          color: primary ? T.accent : T.textMid, opacity: disabled ? 0.45 : 1,
+          fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap", ...style,
+        }}>{children}</button>
+    );
+
+    const Card = ({ title, right, children, style }) => (
+      <div style={{
+        background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+        borderRadius: 12, padding: "16px 18px", minWidth: 0, ...style,
+      }}>
+        {(title || right) && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>{title}</div>
+            {right}
+          </div>
+        )}
+        {children}
+      </div>
+    );
+
+    const SubHead = ({ children, right }) => (
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8,
+        fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em",
+        color: T.accent, margin: "18px 0 10px", paddingBottom: 6,
+        borderBottom: `1px solid ${T.accentBorder}`,
+      }}>
+        <span>{children}</span>
+        {right && <span style={{ ...mono, fontSize: 11, color: T.textMid, letterSpacing: 0, textTransform: "none" }}>{right}</span>}
+      </div>
+    );
+
+    const StatCard = ({ label, value, sub, color, progress }) => (
+      <div className="mn-stat-card" style={{
+        background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+        borderRadius: 10, padding: "14px 16px", flex: 1, minWidth: 150,
+      }}>
+        <div style={{ fontSize: 10, color: "#6b7c90", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: color || T.text, ...mono }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2, lineHeight: 1.4 }}>{sub}</div>}
+        {progress != null && (
+          <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%`, height: "100%", borderRadius: 2, background: color || T.accent, transition: "width 0.3s" }} />
+          </div>
+        )}
+      </div>
+    );
+
+    const NWTooltip = ({ active, payload, label }) => {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div style={{
+          background: "rgba(16,22,36,0.95)", border: `1px solid ${T.accentDim}`,
+          borderRadius: 8, padding: "10px 14px", fontFamily: "'DM Sans', sans-serif",
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.accent, marginBottom: 6 }}>{label}</div>
+          {payload.filter(p => p.value != null).map((p, i) => (
+            <div key={i} style={{ fontSize: 12, color: p.color, marginBottom: 2, display: "flex", gap: 8, justifyContent: "space-between" }}>
+              <span style={{ opacity: 0.8 }}>{p.name}</span>
+              <span style={{ ...mono }}>{fmtFull(p.value)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    const GROUP_COLORS = ["#cf6e6e", "#d4a052", "#c4a0e8", "#e8c88a", "#e88aa8", "#a58fd4", "#d48a52"];
+    const BUCKET_COLORS = ["#2dd4bf", "#6ecf8e", "#52a0d4", "#a5b4fc", "#34d399", "#7dd3fc"];
+
+    // ══════════════════════════════════════════════════════════
+    // ─── MAIN COMPONENT ───
+    // ══════════════════════════════════════════════════════════
+
+    // section: "budget" shows the budget + allocation; "networth" shows balances, check-ins,
+    // emergency fund and the FIRE sync. autoCheckIn opens the check-in form on arrival.
+    function Money({ section = "budget", autoCheckIn = false }) {
+      const isMobile = useIsMobile();
+      const showBudget = section === "budget", showNW = section === "networth";
+      const [data, setData] = useState(loadMoney);
+      const [fireInputs, setFireInputs] = useState(loadFire);
+      const [checkIn, setCheckIn] = useState(null); // { date, balances } while the check-in form is open
+      const [chartScope, setChartScope] = useState("all"); // "all" | "liquid" (excludes property + loans)
+      const [showHistory, setShowHistory] = useState(false);
+      const [syncNote, setSyncNote] = useState(null);
+
+      useEffect(() => {
+        try { localStorage.setItem(MONEY_KEY, JSON.stringify(data)); } catch {}
+      }, [data]);
+      // FIRE Milestones may change its inputs in another tab — re-read when that happens.
+      useEffect(() => {
+        const refresh = () => setFireInputs(loadFire());
+        const onStorage = (e) => { if (e.key === FIRE_STORAGE_KEY) refresh(); };
+        window.addEventListener("focus", refresh);
+        window.addEventListener("storage", onStorage);
+        return () => { window.removeEventListener("focus", refresh); window.removeEventListener("storage", onStorage); };
+      }, []);
+
+      const patchItem = (key, id, patch) =>
+        setData(d => ({ ...d, [key]: d[key].map(x => x.id === id ? { ...x, ...patch } : x) }));
+      const addItem = (key, item) => setData(d => ({ ...d, [key]: [...d[key], { id: uid(), ...item }] }));
+      const removeItem = (key, id) => setData(d => ({ ...d, [key]: d[key].filter(x => x.id !== id) }));
+      const renameGroup = (from, to) =>
+        setData(d => ({ ...d, expenses: d.expenses.map(e => e.group === from ? { ...e, group: to } : e) }));
+
+      const m = useMemo(() => computeMoney(data), [data]);
+      const { incomeM, expM, retireSpendM, surplus, unallocated, savingRate, fireSavingM, groups, groupTotals, snaps, latest, now, before, sinceLast, runway } = m;
+
+      const swr = num(fireInputs.swr) || 4;
+      const fireNumber = (retireSpendM * 12) / (swr / 100);
+      const firePortfolio = now.super + now.fireOutside;
+
+      // ─── Allocation bar segments (share of take-home income) ───
+      const segments = [
+        ...groupTotals.map((g, i) => ({ label: g.group || "Untitled", value: g.monthly, color: GROUP_COLORS[i % GROUP_COLORS.length], kind: "expense" })),
+        ...data.buckets.map((b, i) => ({ label: b.label || "Untitled", value: num(b.amount), color: BUCKET_COLORS[i % BUCKET_COLORS.length], kind: "saving" })),
+        ...(unallocated > 0.5 ? [{ label: "Unallocated", value: unallocated, color: "rgba(255,255,255,0.18)", kind: "rest" }] : []),
+      ].filter(s => s.value > 0);
+      const barBase = Math.max(incomeM, sum(segments.map(s => s.value)));
+
+      // ─── Net worth chart data ───
+      const chartData = useMemo(() => {
+        const scope = (t) => chartScope === "all" ? t
+          : { ...t, property: 0, loan: 0, nw: t.nw - t.property + t.loan };
+        const rows = snaps.map(s => {
+          const t = scope(snapshotTotals(data.accounts, s));
+          return {
+            label: fmtDate(s.date), super: t.super, invest: t.invest, cash: t.cash,
+            property: t.property, other: t.other, debt: t.loan || null, nw: t.nw,
+          };
+        });
+        if (rows.length) {
+          // 12-month plan from the latest check-in: net worth + monthly surplus (no growth).
+          const last = rows[rows.length - 1];
+          last.plan = last.nw;
+          const d0 = parseISO(snaps[snaps.length - 1].date);
+          for (let k = 1; k <= 12; k++) {
+            const d = new Date(d0.getFullYear(), d0.getMonth() + k, 1);
+            rows.push({ label: `${d.getFullYear()}${MONTHS[d.getMonth()]}`, plan: Math.round(last.nw + surplus * k) });
+          }
+        }
+        return rows;
+      }, [snaps, data.accounts, chartScope, surplus]);
+      const activeCats = ASSET_CATS.filter(c => chartData.some(r => r[c] > 0));
+      const hasDebt = chartData.some(r => r.debt > 0);
+
+      // ─── Check-in ───
+      const openCheckIn = () => setCheckIn({
+        date: todayISO(),
+        balances: Object.fromEntries(data.accounts.map(a => [a.id, latest ? num(latest.balances[a.id]) : 0])),
+      });
+      const saveCheckIn = () => {
+        setData(d => ({
+          ...d,
+          // One snapshot per date — re-saving the same day replaces it.
+          snapshots: [...d.snapshots.filter(s => s.date !== checkIn.date), { id: uid(), date: checkIn.date, balances: checkIn.balances }],
+        }));
+        setCheckIn(null);
+      };
+      const checkInTotals = checkIn ? snapshotTotals(data.accounts, checkIn) : null;
+
+      // ─── Sync to FIRE ───
+      const { rows: syncRows, syncable, changes: syncChanges } = fireSync(data, m, fireInputs);
+      const applySync = () => {
+        writeFireSync(syncable);
+        setFireInputs(loadFire());
+        setData(d => ({ ...d, lastSync: todayISO() }));
+        setSyncNote(`Updated ${syncable.length} FIRE input${syncable.length === 1 ? "" : "s"}.`);
+      };
+      useEffect(() => { if (autoCheckIn && showNW) openCheckIn(); }, []);
+
+      const nextRung = data.efRungs.find(r => r * expM > now.ef);
+      const pad = isMobile ? 16 : 32;
+      const grid2 = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.15fr) minmax(0,1fr)", gap: 16, marginBottom: 16 };
+      // On phones the label gets its own full-width line; amount · frequency · × sit below it.
+      const rowGrid = isMobile ? "minmax(0,1fr) minmax(0,1fr) 28px" : "minmax(0,1fr) 104px 108px 28px";
+      const labelCell = isMobile ? { gridColumn: "1 / -1" } : undefined;
+
+      return (
+        <div style={{ color: "#c8d5e2", fontFamily: "'DM Sans', sans-serif" }}>
+          <div style={{ maxWidth: 1400, margin: "0 auto", padding: `${isMobile ? 16 : 20}px ${pad}px 96px` }}>
+            {showNW && (<>
+            {/* Snapshot */}
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+              <StatCard label="Net worth" value={latest ? fmt(now.nw) : "—"} color={T.accent}
+                sub={latest
+                  ? (m.prev ? `${fmtSigned(now.nw - before.nw)} since ${fmtDate(m.prev.date)}` : `as of ${fmtDate(latest.date)}`)
+                  : "do your first check-in below"} />
+              <StatCard label="Monthly surplus" value={fmt(surplus)} color={surplus >= 0 ? T.teal : T.red}
+                sub={`${Math.round(savingRate * 100)}% saving rate`} progress={Math.max(0, savingRate)} />
+              <StatCard label="Emergency runway" value={latest ? `${runway.toFixed(1)} mo` : "—"} color={T.green}
+                sub={latest ? (nextRung ? `next goal ${nextRung} mo (${fmt(nextRung * expM)})` : "every goal reached ✓") : "of total expenses"}
+                progress={latest && nextRung ? runway / nextRung : (latest ? 1 : null)} />
+              <StatCard label="FIRE progress" value={latest && fireNumber > 0 ? `${Math.round(firePortfolio / fireNumber * 100)}%` : "—"} color={T.indigo}
+                sub={`${fmt(firePortfolio)} of ${fmt(fireNumber)} (${swr}% SWR)`}
+                progress={latest && fireNumber > 0 ? firePortfolio / fireNumber : null} />
+            </div>
+
+            </>)}
+            {showBudget && (<>
+            {/* Budget + allocation */}
+            <div style={grid2}>
+              <Card title="Monthly budget" right={<span style={{ fontSize: 11, color: T.textDim }}>amounts in any frequency — converted to /month</span>}>
+                <SubHead right={`${fmtFull(incomeM)}/mo`}>Take-home income</SubHead>
+                {data.income.map(it => (
+                  <div key={it.id} style={{ display: "grid", gridTemplateColumns: rowGrid, gap: 6, marginBottom: 6, alignItems: "center" }}>
+                    <TextIn value={it.label} placeholder="Income source" style={labelCell} onChange={(v) => patchItem("income", it.id, { label: v })} />
+                    <MoneyIn value={it.amount} onChange={(v) => patchItem("income", it.id, { amount: v })} />
+                    <FreqSelect value={it.freq} onChange={(v) => patchItem("income", it.id, { freq: v })} />
+                    <XBtn onClick={() => removeItem("income", it.id)} />
+                  </div>
+                ))}
+                <AddBtn onClick={() => addItem("income", { label: "", amount: 0, freq: "month" })}>+ Add income</AddBtn>
+
+                {groups.map((g, gi) => {
+                  const items = data.expenses.filter(e => e.group === g);
+                  return (
+                    <div key={gi}>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 8, margin: "18px 0 8px", paddingBottom: 6,
+                        borderBottom: `1px solid ${T.accentBorder}`,
+                      }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: GROUP_COLORS[gi % GROUP_COLORS.length], flexShrink: 0 }} />
+                        <input className="mn-in" value={g} onChange={(e) => renameGroup(g, e.target.value)} placeholder="Group name"
+                          style={{ ...inputBase, background: "transparent", border: "1px solid transparent", padding: "2px 4px",
+                            fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.accent }} />
+                        <span style={{ ...mono, fontSize: 11, color: T.textMid, whiteSpace: "nowrap" }}>
+                          {fmtFull(groupTotals[gi].monthly)}/mo · {incomeM > 0 ? (groupTotals[gi].monthly / incomeM * 100).toFixed(1) : "0"}%
+                        </span>
+                      </div>
+                      {items.map(e => (
+                        <div key={e.id} style={{ marginBottom: 8 }}>
+                          <div style={{ display: "grid", gridTemplateColumns: rowGrid, gap: 6, alignItems: "center" }}>
+                            <TextIn value={e.label} placeholder="Expense" style={labelCell} onChange={(v) => patchItem("expenses", e.id, { label: v })} />
+                            <MoneyIn value={e.amount} onChange={(v) => patchItem("expenses", e.id, { amount: v })} />
+                            <FreqSelect value={e.freq} onChange={(v) => patchItem("expenses", e.id, { freq: v })} />
+                            <XBtn onClick={() => removeItem("expenses", e.id)} />
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 3, paddingRight: 34 }}>
+                            {e.freq !== "month" && <span style={{ fontSize: 10, color: T.textDark, ...mono }}>= {fmtFull(toMonthly(e))}/mo</span>}
+                            <Chip on={e.retire} color={T.indigo} onClick={() => patchItem("expenses", e.id, { retire: !e.retire })}
+                              title="Does this cost continue after you retire? Feeds FIRE annual spending.">in retirement</Chip>
+                          </div>
+                        </div>
+                      ))}
+                      <button onClick={() => addItem("expenses", { group: g, label: "", amount: 0, freq: "month", retire: true })}
+                        style={{ background: "transparent", border: "none", color: T.textDim, fontSize: 11, fontWeight: 600, cursor: "pointer", padding: "2px 0" }}>
+                        + add to {g || "group"}
+                      </button>
+                    </div>
+                  );
+                })}
+                <AddBtn onClick={() => {
+                  let name = "New group", n = 2;
+                  while (groups.includes(name)) name = `New group ${n++}`;
+                  addItem("expenses", { group: name, label: "", amount: 0, freq: "month", retire: true });
+                }}>+ Add expense group</AddBtn>
+
+                {/* Totals */}
+                <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${T.panelBorder}`, display: "grid", gap: 4, ...mono, fontSize: 13 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: T.textMid }}>Income</span><span style={{ color: T.text }}>{fmtFull(incomeM)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: T.textMid }}>Expenses</span><span style={{ color: T.red }}>−{fmtFull(expM)}</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}>
+                    <span style={{ color: T.textMid }}>Surplus to save &amp; invest</span>
+                    <span style={{ color: surplus >= 0 ? T.teal : T.red }}>{fmtFull(surplus)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                    <span style={{ color: T.textDim }}>In retirement (FIRE spending)</span>
+                    <span style={{ color: T.indigo }}>{fmtFull(retireSpendM)}/mo · {fmtFull(retireSpendM * 12)}/yr</span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card title="Where each dollar goes">
+                {/* Stacked bar */}
+                <div style={{ display: "flex", height: 26, borderRadius: 6, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+                  {barBase > 0 && segments.map((s, i) => (
+                    <div key={i} title={`${s.label}: ${fmtFull(s.value)}/mo`}
+                      style={{ width: `${s.value / barBase * 100}%`, background: s.color, opacity: s.kind === "expense" ? 0.75 : 0.9,
+                        borderRight: i < segments.length - 1 ? "1px solid #0b1120" : "none" }} />
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.textDim, marginTop: 4, ...mono }}>
+                  <span>spending {incomeM > 0 ? Math.round(expM / incomeM * 100) : 0}%</span>
+                  <span>saving {Math.round(Math.max(0, savingRate) * 100)}%</span>
+                </div>
+                <div style={{ marginTop: 10, display: "grid", gap: 3 }}>
+                  {segments.map((s, i) => (
+                    <div key={i} style={{ display: "grid", gridTemplateColumns: "10px minmax(0,1fr) auto 52px", gap: 8, alignItems: "center", fontSize: 12 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color }} />
+                      <span style={{ color: s.kind === "expense" ? T.textMid : T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
+                      <span style={{ ...mono, color: T.textMid, fontWeight: 500 }}>{fmtFull(s.value)}</span>
+                      <span style={{ ...mono, color: T.textDim, fontWeight: 500, textAlign: "right" }}>{incomeM > 0 ? (s.value / incomeM * 100).toFixed(1) : "0.0"}%</span>
+                    </div>
+                  ))}
+                </div>
+
+                <SubHead right={`${fmtFull(m.bucketsM)}/mo`}>Surplus allocation</SubHead>
+                {data.buckets.map((b, i) => (
+                  <div key={b.id} style={{ marginBottom: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "10px minmax(0,1fr) 104px 28px", gap: 6, alignItems: "center" }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 2, background: BUCKET_COLORS[i % BUCKET_COLORS.length] }} />
+                      <TextIn value={b.label} placeholder="Where it goes" onChange={(v) => patchItem("buckets", b.id, { label: v })} />
+                      <MoneyIn value={b.amount} onChange={(v) => patchItem("buckets", b.id, { amount: v })} />
+                      <XBtn onClick={() => removeItem("buckets", b.id)} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 3, paddingRight: 34 }}>
+                      <Chip on={b.fire} color={T.teal} onClick={() => patchItem("buckets", b.id, { fire: !b.fire })}
+                        title="Counts as FIRE 'monthly outside saving' (long-term investing)">FIRE investing</Chip>
+                    </div>
+                  </div>
+                ))}
+                <AddBtn onClick={() => addItem("buckets", { label: "", amount: 0, fire: false })}>+ Add allocation</AddBtn>
+                <div style={{
+                  marginTop: 12, padding: "8px 10px", borderRadius: 6, fontSize: 12, lineHeight: 1.5,
+                  background: unallocated < -0.5 ? "rgba(207,110,110,0.08)" : "rgba(255,255,255,0.02)",
+                  border: `1px solid ${unallocated < -0.5 ? "rgba(207,110,110,0.3)" : T.panelBorder}`,
+                  color: unallocated < -0.5 ? T.red : T.textMid,
+                }}>
+                  {unallocated < -0.5
+                    ? <>⚠ Allocations exceed your surplus by <strong>{fmtFull(-unallocated)}/mo</strong>. Trim an allocation or an expense.</>
+                    : <>Unallocated: <strong style={{ ...mono, color: T.text }}>{fmtFull(unallocated)}/mo</strong> — buffer that stays in your everyday / offset account.</>}
+                </div>
+              </Card>
+            </div>
+
+            </>)}
+            {showNW && (<>
+            {/* Net worth */}
+            <Card title="Net worth" style={{ marginBottom: 16 }}
+              right={
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  {[{ id: "all", label: "Everything" }, { id: "liquid", label: "Excl. home & loans" }].map(o => (
+                    <Chip key={o.id} on={chartScope === o.id} onClick={() => setChartScope(o.id)}>{o.label}</Chip>
+                  ))}
+                  <Button primary onClick={openCheckIn} disabled={!!checkIn}>✎ Monthly check-in</Button>
+                </div>
+              }>
+
+              {checkIn && (
+                <div style={{ padding: "14px 16px", borderRadius: 10, background: T.accentBg, border: `1px solid ${T.accentBorder}`, marginBottom: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, color: T.text, fontWeight: 600 }}>Check-in — enter today's balances</div>
+                    <input className="mn-in" type="date" value={checkIn.date} max={todayISO()}
+                      onChange={(e) => e.target.value && setCheckIn(c => ({ ...c, date: e.target.value }))}
+                      style={{ ...inputBase, width: "auto", ...mono, fontWeight: 500 }} />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "8px 20px" }}>
+                    {data.accounts.map(a => (
+                      <div key={a.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 140px", gap: 8, alignItems: "center" }}>
+                        <span style={{ fontSize: 12, color: T.textMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: CATS[a.cat].color, marginRight: 6 }} />
+                          {a.label || "Untitled"}{a.cat === "loan" ? " (owed)" : ""}
+                        </span>
+                        <MoneyIn value={checkIn.balances[a.id]} onChange={(v) => setCheckIn(c => ({ ...c, balances: { ...c.balances, [a.id]: v } }))} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+                    <div style={{ fontSize: 12, color: T.textMid, ...mono }}>
+                      Net worth {fmtFull(checkInTotals.nw)}
+                      {latest && <span style={{ color: checkInTotals.nw >= now.nw ? T.green : T.red }}> ({fmtSigned(checkInTotals.nw - now.nw)} vs {fmtDate(latest.date)})</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Button onClick={() => setCheckIn(null)}>Cancel</Button>
+                      <Button primary onClick={saveCheckIn}>Save check-in</Button>
+                    </div>
+                  </div>
+                  {data.snapshots.some(s => s.date === checkIn.date) && (
+                    <div style={{ fontSize: 11, color: T.textDim, marginTop: 6, fontStyle: "italic" }}>
+                      Replaces the existing check-in on {fmtDate(checkIn.date)}.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {chartData.length === 0 ? (
+                <div style={{ padding: "36px 12px", textAlign: "center", color: T.textDim, fontSize: 13, lineHeight: 1.6 }}>
+                  No check-ins yet. Hit <strong style={{ color: T.accent }}>Monthly check-in</strong> and type in today's balances —
+                  it takes two minutes, and each one adds a point to this chart.
+                </div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={isMobile ? 280 : 360}>
+                    <ComposedChart data={chartData} margin={{ top: 10, right: 12, left: 0, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} minTickGap={16} />
+                      <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} width={62} />
+                      <Tooltip content={<NWTooltip />} />
+                      <Legend verticalAlign="top" height={30} formatter={(val) => <span style={{ color: T.textMid, fontSize: 11 }}>{val}</span>} />
+                      {activeCats.map(c => (
+                        <Area key={c} type="monotone" dataKey={c} stackId="assets" name={CATS[c].label}
+                          stroke={CATS[c].color} fill={CATS[c].color} fillOpacity={0.18} strokeWidth={1.2} isAnimationActive={false} />
+                      ))}
+                      {hasDebt && <Line type="monotone" dataKey="debt" name="Debt" stroke={T.red} strokeWidth={1.5} strokeDasharray="2 3" dot={false} isAnimationActive={false} />}
+                      <Line type="monotone" dataKey="nw" name="Net worth" stroke={T.text} strokeWidth={2.5} dot={{ r: 3, fill: T.text }} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="plan" name="Plan (savings only)" stroke={T.accent} strokeWidth={2} strokeDasharray="6 4" dot={false} isAnimationActive={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                  <div style={{ fontSize: 11, color: T.textDim, marginTop: 6, lineHeight: 1.5, fontStyle: "italic" }}>
+                    Dashed plan = net worth + {fmt(surplus)}/mo surplus for the next 12 months (no market growth or loan paydown).
+                    {sinceLast && (
+                      <span style={{ fontStyle: "normal", color: T.textMid }}>
+                        {" "}Since {fmtDate(m.prev.date)}: <strong style={{ color: sinceLast.actual >= sinceLast.planned ? T.green : T.accent }}>{fmtSigned(sinceLast.actual)}</strong> actual
+                        vs {fmtSigned(sinceLast.planned)} planned over {sinceLast.months.toFixed(1)} months.
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+
+              <SubHead>Accounts</SubHead>
+              {data.accounts.map(a => {
+                const bal = latest ? num(latest.balances[a.id]) : null;
+                const prevBal = m.prev ? num(m.prev.balances[a.id]) : null;
+                const canFire = a.cat !== "super" && a.cat !== "loan";
+                return (
+                  <div key={a.id} style={{ marginBottom: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) 120px 28px" : "minmax(0,1fr) 150px 120px 28px", gap: 6, alignItems: "center" }}>
+                      <TextIn value={a.label} placeholder="Account" onChange={(v) => patchItem("accounts", a.id, { label: v })} />
+                      <select className="mn-in" value={a.cat}
+                        onChange={(e) => { const cat = e.target.value; patchItem("accounts", a.id, { cat, fire: CATS[cat].fire, ef: cat === "cash" }); }}
+                        style={{ ...inputBase, padding: "6px 4px", color: CATS[a.cat].color, cursor: "pointer" }}>
+                        {Object.keys(CATS).map(c => <option key={c} value={c}>{CATS[c].label}</option>)}
+                      </select>
+                      {!isMobile && (
+                        <div style={{ textAlign: "right", ...mono, fontSize: 13, color: a.cat === "loan" ? T.red : T.text }}>
+                          {bal == null ? "—" : (a.cat === "loan" && bal > 0 ? "−" : "") + fmtFull(bal)}
+                        </div>
+                      )}
+                      <XBtn onClick={() => {
+                        if (confirm(`Remove "${a.label || "this account"}"? Its balances drop out of every past check-in too.`)) removeItem("accounts", a.id);
+                      }} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 3, paddingRight: 34, flexWrap: "wrap" }}>
+                      {isMobile && bal != null && (
+                        <span style={{ ...mono, fontSize: 12, color: a.cat === "loan" ? T.red : T.text, marginRight: "auto" }}>{(a.cat === "loan" && bal > 0 ? "−" : "") + fmtFull(bal)}</span>
+                      )}
+                      {bal != null && prevBal != null && bal !== prevBal && (
+                        <span style={{ ...mono, fontSize: 10, color: (a.cat === "loan" ? prevBal - bal : bal - prevBal) >= 0 ? T.green : T.red }}>
+                          {fmtSigned(bal - prevBal)}
+                        </span>
+                      )}
+                      {a.cat === "cash" && (
+                        <Chip on={!!a.ef} color={T.green} onClick={() => patchItem("accounts", a.id, { ef: !a.ef })}
+                          title="Counts toward the emergency-fund runway">emergency fund</Chip>
+                      )}
+                      {canFire && (
+                        <Chip on={!!a.fire} color={T.teal} onClick={() => patchItem("accounts", a.id, { fire: !a.fire })}
+                          title="Counts as FIRE outside-super balance">FIRE outside-super</Chip>
+                      )}
+                      {a.cat === "super" && <span style={{ fontSize: 10, color: T.textDark }}>→ FIRE super</span>}
+                    </div>
+                  </div>
+                );
+              })}
+              <AddBtn onClick={() => addItem("accounts", { label: "", cat: "cash", fire: false, ef: true })}>+ Add account</AddBtn>
+
+              {snaps.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <button onClick={() => setShowHistory(s => !s)}
+                    style={{ background: "transparent", border: "none", color: T.textDim, fontSize: 11, fontWeight: 600, cursor: "pointer", padding: 0 }}>
+                    {showHistory ? "▾" : "▸"} Check-in history ({snaps.length})
+                  </button>
+                  {showHistory && (
+                    <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                      {[...snaps].reverse().map(s => (
+                        <div key={s.id || s.date} style={{ display: "grid", gridTemplateColumns: "110px minmax(0,1fr) 28px", gap: 8, alignItems: "center", fontSize: 12, ...mono, fontWeight: 500 }}>
+                          <span style={{ color: T.textMid }}>{fmtDate(s.date)}</span>
+                          <span style={{ color: T.text, textAlign: "right" }}>{fmtFull(snapshotTotals(data.accounts, s).nw)}</span>
+                          <XBtn title="Delete check-in" onClick={() => {
+                            if (confirm(`Delete the ${fmtDate(s.date)} check-in?`))
+                              setData(d => ({ ...d, snapshots: d.snapshots.filter(x => x.date !== s.date) }));
+                          }} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+
+            {/* Emergency fund + FIRE sync */}
+            <div style={grid2}>
+              <Card title="Emergency fund ladder"
+                right={<span style={{ fontSize: 11, color: T.textDim, ...mono }}>{fmt(now.ef)} saved · {fmtFull(expM)}/mo expenses</span>}>
+                {!latest && <div style={{ fontSize: 12, color: T.textDim, marginBottom: 10 }}>Do a check-in to see progress. Targets use your total monthly expenses.</div>}
+                {data.efRungs.map(r => {
+                  const target = r * expM;
+                  const p = target > 0 ? Math.min(1, now.ef / target) : 0;
+                  const done = latest && p >= 1;
+                  return (
+                    <div key={r} style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                        <span style={{ color: done ? T.green : T.textMid }}>{done ? "✓ " : ""}{r} months</span>
+                        <span style={{ ...mono, fontWeight: 500, color: done ? T.green : T.textMid }}>
+                          {fmtFull(target)}{!done && latest ? <span style={{ color: T.textDim }}> · {fmt(target - now.ef)} to go</span> : ""}
+                        </span>
+                      </div>
+                      <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                        <div style={{ width: `${latest ? p * 100 : 0}%`, height: "100%", borderRadius: 3, background: done ? T.green : T.accent, transition: "width 0.3s" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 11, color: T.textDim, marginTop: 6, lineHeight: 1.5 }}>
+                  Counts accounts marked <span style={{ color: T.green }}>emergency fund</span>.
+                  {latest && expM > 0 && <> You're at <strong style={{ color: T.text }}>{runway.toFixed(1)} months</strong>.</>}
+                </div>
+              </Card>
+
+              <Card title="Send to FIRE Milestones"
+                right={data.lastSync && <span style={{ fontSize: 11, color: T.textDim }}>last sent {fmtDate(data.lastSync)}</span>}>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {syncRows.map(r => (
+                    <div key={r.key} style={{
+                      display: "grid", gridTemplateColumns: "22px minmax(0,1fr) auto", gap: 8, alignItems: "center",
+                      opacity: r.available ? 1 : 0.45,
+                    }}>
+                      <input type="checkbox" checked={!!data.sync[r.key] && r.available} disabled={!r.available}
+                        onChange={() => setData(d => ({ ...d, sync: { ...d.sync, [r.key]: !d.sync[r.key] } }))}
+                        style={{ width: 16, height: 16, accentColor: T.accent, cursor: "pointer" }} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, color: T.text }}>{r.label}</div>
+                        <div style={{ fontSize: 10, color: r.available && r.value === 0 && r.current > 0 ? T.red : T.textDim }}>
+                          {!r.available ? "needs a check-in first"
+                            : r.value === 0 && r.current > 0 ? "⚠ would set FIRE to $0 — untick, or enter this balance at a check-in"
+                            : r.note}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", ...mono, fontSize: 12 }}>
+                        <div style={{ color: r.value !== r.current ? T.accent : T.textMid }}>{fmtFull(r.value)}</div>
+                        <div style={{ fontSize: 10, color: T.textDark, fontWeight: 500 }}>
+                          {r.value !== r.current ? `now ${fmtFull(r.current)}` : "already matches"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
+                  <Button primary onClick={applySync} disabled={syncChanges.length === 0}>
+                    {syncChanges.length ? `Update ${syncChanges.length} FIRE input${syncChanges.length === 1 ? "" : "s"}` : "FIRE is up to date"}
+                  </Button>
+                  <a href="#fire" style={{ fontSize: 12, color: T.accent, textDecoration: "none", fontWeight: 600 }}>Open FIRE →</a>
+                </div>
+                {syncNote && <div style={{ fontSize: 11, color: T.green, marginTop: 8 }}>✓ {syncNote}</div>}
+                <div style={{ fontSize: 11, color: T.textDim, marginTop: 10, lineHeight: 1.5 }}>
+                  Salary, voluntary super and assumptions stay in FIRE Milestones — FIRE models gross salary, while this page
+                  tracks take-home pay. Leave the mortgage unticked here — the <a href="#loan" style={{ color: T.accent }}>Home loan</a> page sends its repayments and payoff age to FIRE separately.
+                </div>
+              </Card>
+            </div>
+
+            </>)}
+            <div style={{
+              padding: "12px 16px", borderRadius: 8,
+              background: "rgba(255,255,255,0.015)", border: `1px solid ${T.panelBorder}`,
+              fontSize: 11, color: T.textDim, lineHeight: 1.7,
+            }}>
+              <strong style={{ color: T.textMid }}>How this works:</strong>{" "}
+              Balances are typed in at each check-in — no bank logins, no servers. Weekly amounts × 52 ÷ 12, fortnightly × 26 ÷ 12.
+              Loans subtract from net worth. Use ⤓ Backup regularly: data lives only in this browser.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    window.MoneyPage = Money;
+    window.MoneyEngine = { computeMoney, loadMoney, loadFire, snapshotTotals, fireSync, writeFireSync, MONEY_KEY };
+    // Shared UI kit for the Overview tab and the app shell
+    window.UI = {
+      T, mono, fmt, fmtFull, fmtSigned, fmtDate, todayISO, parseISO, num, sum, MONTHS, CATS, ASSET_CATS,
+      useIsMobile, Card, StatCard, Button, Chip, SubHead,
+    };
+})();

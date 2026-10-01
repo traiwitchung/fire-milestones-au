@@ -3,13 +3,16 @@
 // first for HTML/JS so deploys propagate immediately. Only falls back to the
 // cache when offline. Bump CACHE on asset changes.
 
-const CACHE = 'fire-au-v20';
+const CACHE = 'fire-au-v21';
 
 const LOCAL_ASSETS = [
   './',
   './index.html',
   './money.html',
-  './loan.html',
+  './fire.jsx',
+  './money.jsx',
+  './loan.jsx',
+  './overview.jsx',
   './manifest.json',
   './icon-180.png',
   './icon-192.png',

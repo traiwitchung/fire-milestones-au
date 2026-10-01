@@ -1,0 +1,1633 @@
+// FIRE milestones — one tab of the Family Networth app. Wrapped in an IIFE so its helpers
+// don't collide with the other tabs; it shares only what it puts on window.
+(() => {
+    const { useState, useMemo, useEffect, useRef } = React;
+    const {
+      ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+      ResponsiveContainer, ReferenceLine, Legend,
+    } = Recharts;
+
+    // ══════════════════════════════════════════════════════════
+    // ─── SHARED HELPERS (copied from FIRE Suite) ───
+    // ══════════════════════════════════════════════════════════
+
+    const fmt = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      if (Math.abs(v) >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+      if (Math.abs(v) >= 1e3) return `$${(v / 1e3).toFixed(0)}k`;
+      return `$${Math.round(v).toLocaleString()}`;
+    };
+    const fmtFull = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      return `$${Math.round(v).toLocaleString()}`;
+    };
+
+    const useIsMobile = (breakpoint = 768) => {
+      const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint);
+      useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < breakpoint);
+        window.addEventListener("resize", handler);
+        return () => window.removeEventListener("resize", handler);
+      }, [breakpoint]);
+      return isMobile;
+    };
+
+    // ─── Theme (gold, matches FIRE Suite FIRE tab) ───
+    const T = {
+      accent: "#d4a052", accentLight: "#e8c88a",
+      accentDim: "rgba(212,160,82,0.3)", accentBg: "rgba(212,160,82,0.08)",
+      accentBorder: "rgba(212,160,82,0.2)",
+      green: "#6ecf8e", red: "#cf6e6e", teal: "#5eead4",
+      indigo: "#a5b4fc", purple: "#c4a0e8", blue: "#52a0d4", emerald: "#34d399",
+      text: "#e8eff8", textMid: "#8a9bb0", textDim: "#5a6b7d", textDark: "#4a5568",
+      panelBg: "rgba(255,255,255,0.02)", panelBorder: "rgba(255,255,255,0.06)",
+    };
+    const mono = { fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 };
+
+    // ─── Components ───
+    const SliderInput = ({ label, value, onChange, min, max, step, format, suffix, helpText, noMaxClamp }) => {
+      const [isEditing, setIsEditing] = useState(false);
+      const [editText, setEditText] = useState("");
+      const prefix = format === "currency" ? "$" : "";
+      const suffixStr = format === "percent" ? "%" : (suffix || "");
+      const displayVal = format === "currency" ? fmtFull(value)
+        : format === "percent" ? `${value}%` : `${value}${suffix || ""}`;
+      const handleStartEdit = () => { setEditText(String(value)); setIsEditing(true); };
+      const handleCommit = () => {
+        setIsEditing(false);
+        // Accept "$1,200", "80k", "1.2m". Clamp to min; clamp to max unless noMaxClamp (uncapped).
+        const cleaned = editText.trim().toLowerCase().replace(/[$,\s]/g, "");
+        const mult = cleaned.endsWith("m") ? 1e6 : cleaned.endsWith("k") ? 1e3 : 1;
+        const parsed = parseFloat(mult === 1 ? cleaned : cleaned.slice(0, -1)) * mult;
+        if (!isNaN(parsed)) {
+          const lo = Math.max(min, parsed);
+          onChange(noMaxClamp ? lo : Math.min(max, lo));
+        }
+      };
+      const handleKeyDown = (e) => {
+        if (e.key === "Enter") handleCommit();
+        if (e.key === "Escape") setIsEditing(false);
+      };
+      return (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+            <label style={{ fontSize: 12, color: T.textMid, fontFamily: "'DM Sans', sans-serif", letterSpacing: "0.02em" }}>{label}</label>
+            {isEditing ? (
+              <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+                {prefix && <span style={{ fontSize: 13, color: T.textMid, ...mono }}>{prefix}</span>}
+                <input type="text" autoFocus value={editText}
+                  onChange={(e) => setEditText(e.target.value)} onBlur={handleCommit} onKeyDown={handleKeyDown}
+                  style={{
+                    width: Math.max(50, editText.length * 10 + 16), fontSize: 14, fontWeight: 600,
+                    color: T.text, ...mono,
+                    background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                    borderRadius: 4, padding: "1px 6px", outline: "none", textAlign: "right",
+                  }}
+                />
+                {suffixStr && <span style={{ fontSize: 13, color: T.textMid, ...mono }}>{suffixStr}</span>}
+              </div>
+            ) : (
+              <span onClick={handleStartEdit} title="Click to type a value"
+                style={{
+                  fontSize: 14, fontWeight: 600, color: T.text, ...mono,
+                  cursor: "text", padding: "1px 6px", borderRadius: 4,
+                  border: "1px solid transparent", transition: "border-color 0.15s, background 0.15s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.accentDim; e.currentTarget.style.background = T.accentBg; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.background = "transparent"; }}
+              >{displayVal}</span>
+            )}
+          </div>
+          <input type="range" min={min} max={noMaxClamp ? Math.max(max, value) : max} step={step} value={value}
+            onChange={(e) => onChange(parseFloat(e.target.value))} style={{ width: "100%", accentColor: T.accent }}
+          />
+          {noMaxClamp && value >= max && (
+            <div style={{ fontSize: 10, color: T.textDark, marginTop: 2, textAlign: "right", ...mono }}>
+              slider maxes at {format === "currency" ? fmt(max) : max}{format === "percent" ? "%" : ""} — click the value to type any amount
+            </div>
+          )}
+          {helpText && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2, fontStyle: "italic" }}>{helpText}</div>}
+        </div>
+      );
+    };
+
+    const SectionHeader = ({ children }) => (
+      <div style={{
+        fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em",
+        color: T.accent, marginBottom: 12, marginTop: 22, paddingBottom: 6,
+        borderBottom: `1px solid ${T.accentBorder}`, fontFamily: "'DM Sans', sans-serif",
+      }}>{children}</div>
+    );
+
+    const StatCard = ({ label, value, sub, color, progress }) => (
+      <div className="ms-stat-card" style={{
+        background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+        borderRadius: 10, padding: "14px 16px", flex: 1, minWidth: 130,
+      }}>
+        <div style={{ fontSize: 10, color: "#6b7c90", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4, fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: color || T.text, ...mono }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>{sub}</div>}
+        {progress != null && (
+          <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%`, height: "100%", borderRadius: 2, background: color || T.accent, transition: "width 0.3s" }} />
+          </div>
+        )}
+      </div>
+    );
+
+    // Collapsible input group — header toggles; collapsed sections show a one-line summary
+    const Section = ({ title, summary, defaultOpen = true, children }) => {
+      const [open, setOpen] = useState(defaultOpen);
+      return (
+        <div>
+          <div onClick={() => setOpen(o => !o)} title={open ? "Collapse" : "Expand"}
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8,
+              fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em",
+              color: T.accent, marginBottom: open ? 12 : 4, marginTop: 22, paddingBottom: 6,
+              borderBottom: `1px solid ${T.accentBorder}`, fontFamily: "'DM Sans', sans-serif",
+              cursor: "pointer", userSelect: "none",
+            }}>
+            <span>{title}</span>
+            <span style={{ fontSize: 9, color: T.textDim, display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
+          </div>
+          {!open && summary && (
+            <div onClick={() => setOpen(true)}
+              style={{ fontSize: 11, color: T.textDim, marginBottom: 4, cursor: "pointer", fontStyle: "italic", lineHeight: 1.5 }}>{summary}</div>
+          )}
+          <div style={{ display: open ? "block" : "none" }}>{children}</div>
+        </div>
+      );
+    };
+
+    const CustomTooltip = ({ active, payload, label }) => {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div style={{
+          background: "rgba(16,22,36,0.95)", border: `1px solid ${T.accentDim}`,
+          borderRadius: 8, padding: "10px 14px", fontFamily: "'DM Sans', sans-serif",
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.accent, marginBottom: 6 }}>Age {label}</div>
+          {payload.map((p, i) => (
+            <div key={i} style={{ fontSize: 12, color: p.color, marginBottom: 2, display: "flex", gap: 8 }}>
+              <span style={{ opacity: 0.7 }}>{p.name}:</span>
+              <span style={{ ...mono }}>{fmtFull(p.value)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    // ─── Australian Tax (2026-27 resident rates, incl. LITO + Medicare levy shade-in) ───
+    // 2026-27: the 16% bracket drops to 15% (legislated; falls again to 14% from 2027-28).
+    const incomeTaxBrackets = [
+      { min: 0, max: 18200, rate: 0 },
+      { min: 18200, max: 45000, rate: 0.15 },
+      { min: 45000, max: 135000, rate: 0.30 },
+      { min: 135000, max: 190000, rate: 0.37 },
+      { min: 190000, max: Infinity, rate: 0.45 },
+    ];
+    function calcIncomeTax(taxableIncome) {
+      const ti = Math.max(0, taxableIncome);
+      let tax = 0;
+      for (const b of incomeTaxBrackets) {
+        if (ti <= b.min) break;
+        tax += (Math.min(ti, b.max) - b.min) * b.rate;
+      }
+      // Low Income Tax Offset — matters for coast/barista phase incomes
+      let lito = 0;
+      if (ti <= 37500) lito = 700;
+      else if (ti <= 45000) lito = 700 - (ti - 37500) * 0.05;
+      else if (ti <= 66667) lito = 325 - (ti - 45000) * 0.015;
+      tax = Math.max(0, tax - Math.max(0, lito));
+      // Medicare levy: nil below the low-income threshold, 10% shade-in, then flat 2%
+      const levyThreshold = 27222;
+      const levy = ti <= levyThreshold ? 0 : Math.min(ti * 0.02, (ti - levyThreshold) * 0.10);
+      return tax + levy;
+    }
+
+    function calcYearContribs(salary, sg, voluntaryPerMonth, concessionalCap) {
+      const grossSG = salary * sg;
+      const grossVolRequested = voluntaryPerMonth * 12;
+      const roomForVoluntary = Math.max(0, concessionalCap - grossSG);
+      const grossVolActual = Math.min(grossVolRequested, roomForVoluntary);
+      const voluntaryRedirected = grossVolRequested - grossVolActual;
+      const sgExcess = Math.max(0, grossSG - concessionalCap);
+      const totalConcessional = Math.min(grossSG, concessionalCap) + grossVolActual;
+      // Div 293 income = taxable income (salary less sacrifice, plus any excess SG) + concessional contribs
+      const incPlusConcess = salary - grossVolActual + sgExcess + totalConcessional;
+      let div293Tax = 0;
+      if (incPlusConcess > 250000) {
+        const div293Amount = Math.min(totalConcessional, incPlusConcess - 250000);
+        div293Tax = div293Amount * 0.15;
+      }
+      const netSuperContrib = Math.max(0, totalConcessional * 0.85 - div293Tax);
+      const totalRedirected = voluntaryRedirected + sgExcess;
+      const taxOnRedirected = totalRedirected > 0
+        ? calcIncomeTax(salary + totalRedirected) - calcIncomeTax(salary)
+        : 0;
+      const excessToOutside = Math.max(0, totalRedirected - taxOnRedirected);
+      const incomeTax = calcIncomeTax(salary + sgExcess);
+      const netSalary = salary - incomeTax;
+      return { netSuperContrib, excessToOutside, incomeTax, netSalary, totalConcessional, div293Tax, grossSG };
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── STORAGE (syncs with FIRE Suite FIRE tab) ───
+    // ══════════════════════════════════════════════════════════
+
+    const FIRE_STORAGE_KEY = "fire-calc-au-inputs"; // shared with FIRE Suite
+    const MS_STORAGE_KEY = "fire-milestones-au-inputs"; // milestone-specific
+
+    const FIRE_DEFAULTS = {
+      currentAge: 30, targetRetireAge: 55, preservationAge: 60,
+      superBalance: 80000, outsideBalance: 40000,
+      annualSalary: 120000, voluntarySuper: 0, monthlySaving: 2000,
+      returnRate: 7, inflationRate: 2.5, sgRate: 12, swr: 4,
+      superEarningsTax: 15, annualSpending: 50000, includeAgedPension: false,
+      salaryGrowthRate: 0, cgtDragRate: 0,
+      // 2026 budget: 30% min CGT, 50% holding-period discount removed.
+      // Effective drag on a withdrawal = minCgtRate × realizedGainShare.
+      // Default 100% gain share = treat every $ withdrawn as fully taxable gain
+      // (conservative — i.e. $100k out → $30k tax → $70k net).
+      minCgtRate: 30, realizedGainShare: 100,
+      // Optional mortgage (set from the Home loan page): monthly repayment in nominal $,
+      // paid until this age. 0 = no mortgage modelled.
+      mortgageRepayment: 0, mortgagePayoffAge: 0,
+    };
+    const MS_DEFAULTS = {
+      coastJobIncome: 50000,
+      baristaIncome: 40000,
+      coastStartAge: 0, // 0 = auto (start coasting at the earliest qualifying age). >0 = delay coasting to this age.
+      purchases: [], // [{ id, label, age, amount }] — amount is in NOMINAL future dollars at that age
+    };
+
+    function loadFireInputs() {
+      try {
+        const raw = localStorage.getItem(FIRE_STORAGE_KEY);
+        if (raw) {
+          const stored = JSON.parse(raw);
+          // 2026-05-13 migration: realizedGainShare's old default was 50%. With the
+          // budget removing the holding-period discount, the new conservative default
+          // is 100% (treat each $ withdrawn as fully taxable gain). Auto-migrate the
+          // old default; leave any other value alone so user customisations stick.
+          if (stored.realizedGainShare === 50) stored.realizedGainShare = 100;
+          return { ...FIRE_DEFAULTS, ...stored };
+        }
+      } catch {}
+      return { ...FIRE_DEFAULTS };
+    }
+    function loadMsInputs() {
+      try {
+        const raw = localStorage.getItem(MS_STORAGE_KEY);
+        if (raw) return { ...MS_DEFAULTS, ...JSON.parse(raw) };
+      } catch {}
+      return { ...MS_DEFAULTS };
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── EXPORT ───
+    // ══════════════════════════════════════════════════════════
+
+    function exportToExcel(inputs, results) {
+      const wb = XLSX.utils.book_new();
+      const summary = [
+        ["FIRE Milestones \u2014 Australia", ""],
+        ["Generated", new Date().toLocaleDateString("en-AU")],
+        ["", ""],
+        ["INPUTS", "VALUE"],
+        ["Current Age", inputs.currentAge],
+        ["Target Retirement Age", inputs.targetRetireAge],
+        ["Preservation Age", inputs.preservationAge],
+        ["Super Balance", inputs.superBalance],
+        ["Outside-Super Balance", inputs.outsideBalance],
+        ["Annual Salary", inputs.annualSalary],
+        ["Voluntary Super (monthly)", inputs.voluntarySuper],
+        ["Monthly Saving", inputs.monthlySaving],
+        ["Annual Spending", inputs.annualSpending],
+        ["Coast Job Income (gross)", inputs.coastJobIncome],
+        ["Barista Income (gross)", inputs.baristaIncome],
+        ["Nominal Return (%)", inputs.returnRate],
+        ["Inflation (%)", inputs.inflationRate],
+        ["SG Rate (%)", inputs.sgRate],
+        ["Real Salary Growth (%)", inputs.salaryGrowthRate || 0],
+        ["Super Earnings Tax (%)", inputs.superEarningsTax],
+        ["SWR (%)", inputs.swr],
+        ["Mortgage Repayment (monthly)", inputs.mortgageRepayment || 0],
+        ["Mortgage Paid Off At Age", inputs.mortgagePayoffAge || ""],
+        ["", ""],
+        ["MILESTONES", "STATUS / YEAR"],
+        ["Coast FIRE @ retirement age", results.coastRetire.label],
+        ["Barista FIRE", results.barista.label],
+        ["Full FIRE", results.fullFire.label],
+        ["", ""],
+        ["FIRE NUMBER", results.fireNumber],
+      ];
+      const ws1 = XLSX.utils.aoa_to_sheet(summary);
+      ws1["!cols"] = [{ wch: 35 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(wb, ws1, "Summary");
+
+      const headers = ["Age", "Year", "Super", "Outside", "Total", "FIRE Number"];
+      const rows = results.projection.map(d => [d.age, d.year, d.super, d.outside, d.total, results.fireNumber]);
+      const ws2 = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      ws2["!cols"] = headers.map(() => ({ wch: 14 }));
+      for (let r = 1; r <= rows.length; r++) {
+        for (let c = 2; c <= 5; c++) {
+          const cell = XLSX.utils.encode_cell({ r, c });
+          if (ws2[cell]) ws2[cell].z = '"$"#,##0';
+        }
+      }
+      XLSX.utils.book_append_sheet(wb, ws2, "Projection");
+      XLSX.writeFile(wb, "FIRE_Milestones.xlsx");
+    }
+
+    function exportToCSV(results) {
+      const h = "Age,Year,Super,Outside,Total\n";
+      const r = results.projection.map(d => `${d.age},${d.year},${d.super},${d.outside},${d.total}`).join("\n");
+      const blob = new Blob([h + r], { type: "text/csv" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "FIRE_Milestones_Projection.csv";
+      a.click();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── MAIN COMPONENT ───
+    // ══════════════════════════════════════════════════════════
+
+    function FIREMilestones() {
+      const isMobile = useIsMobile();
+      const [fireSaved] = useState(loadFireInputs);
+      const [msSaved] = useState(loadMsInputs);
+
+      // Shared inputs (synced with FIRE Suite)
+      const [currentAge, setCurrentAge] = useState(fireSaved.currentAge);
+      const [targetRetireAge, setTargetRetireAge] = useState(fireSaved.targetRetireAge);
+      const [preservationAge, setPreservationAge] = useState(fireSaved.preservationAge);
+      const [superBalance, setSuperBalance] = useState(fireSaved.superBalance);
+      const [outsideBalance, setOutsideBalance] = useState(fireSaved.outsideBalance);
+      const [annualSalary, setAnnualSalary] = useState(fireSaved.annualSalary);
+      const [voluntarySuper, setVoluntarySuper] = useState(fireSaved.voluntarySuper);
+      const [monthlySaving, setMonthlySaving] = useState(fireSaved.monthlySaving);
+      const [annualSpending, setAnnualSpending] = useState(fireSaved.annualSpending);
+      const [returnRate, setReturnRate] = useState(fireSaved.returnRate);
+      const [inflationRate, setInflationRate] = useState(fireSaved.inflationRate);
+      const [sgRate, setSgRate] = useState(fireSaved.sgRate);
+      const [swr, setSwr] = useState(fireSaved.swr);
+      const [superEarningsTax, setSuperEarningsTax] = useState(fireSaved.superEarningsTax);
+      const [salaryGrowthRate, setSalaryGrowthRate] = useState(fireSaved.salaryGrowthRate || 0);
+      const [minCgtRate, setMinCgtRate] = useState(fireSaved.minCgtRate);
+      const [realizedGainShare, setRealizedGainShare] = useState(fireSaved.realizedGainShare);
+      const [mortgageRepayment, setMortgageRepayment] = useState(fireSaved.mortgageRepayment || 0);
+      const [mortgagePayoffAge, setMortgagePayoffAge] = useState(fireSaved.mortgagePayoffAge || 0);
+
+      // Milestone-specific
+      const [coastJobIncome, setCoastJobIncome] = useState(msSaved.coastJobIncome);
+      const [baristaIncome, setBaristaIncome] = useState(msSaved.baristaIncome);
+      const [coastStartAge, setCoastStartAge] = useState(msSaved.coastStartAge || 0);
+      const [purchases, setPurchases] = useState(() =>
+        (msSaved.purchases || []).map(p => ({ ...p, id: p.id || Date.now() + Math.random() }))
+      );
+
+      const addPurchase = () => {
+        setPurchases(prev => [...prev, {
+          id: Date.now() + Math.random(),
+          label: "",
+          age: Math.min(currentAge + 5, targetRetireAge),
+          amount: 50000,
+        }]);
+      };
+      const removePurchase = (id) => setPurchases(prev => prev.filter(p => p.id !== id));
+      const updatePurchase = (id, field, value) =>
+        setPurchases(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+
+      // Persist shared inputs back to FIRE Suite key
+      const fireInputs = {
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving,
+        returnRate, inflationRate, sgRate, swr,
+        superEarningsTax, annualSpending, salaryGrowthRate,
+        minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
+      };
+      const msInputs = { coastJobIncome, baristaIncome, coastStartAge, purchases };
+      const fireRef = useRef(fireInputs); fireRef.current = fireInputs;
+      const msRef = useRef(msInputs); msRef.current = msInputs;
+
+      useEffect(() => {
+        // merge into existing fire-calc-au-inputs (preserve any extra fields like includeAgedPension)
+        try {
+          const existing = JSON.parse(localStorage.getItem(FIRE_STORAGE_KEY) || "{}");
+          localStorage.setItem(FIRE_STORAGE_KEY, JSON.stringify({ ...existing, ...fireInputs }));
+        } catch {
+          localStorage.setItem(FIRE_STORAGE_KEY, JSON.stringify(fireInputs));
+        }
+        localStorage.setItem(MS_STORAGE_KEY, JSON.stringify(msInputs));
+      });
+      // The Money page can push new inputs while this tab is open — reload so this
+      // tab doesn't overwrite them with its stale state on the next render.
+      useEffect(() => {
+        const onStorage = (e) => {
+          if (e.key !== FIRE_STORAGE_KEY || !e.newValue) return;
+          try {
+            const next = JSON.parse(e.newValue);
+            const cur = fireRef.current;
+            if (Object.keys(cur).some(k => next[k] !== undefined && next[k] !== cur[k])) location.reload();
+          } catch {}
+        };
+        window.addEventListener("storage", onStorage);
+        return () => window.removeEventListener("storage", onStorage);
+      }, []);
+
+      // ══════════════════════════════════════
+      // CALCULATION ENGINE
+      // ══════════════════════════════════════
+      const results = useMemo(() => computeAll({
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving, annualSpending,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
+        coastJobIncome, baristaIncome, coastStartAge, purchases,
+        minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
+      }), [
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving, annualSpending,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
+        coastJobIncome, baristaIncome, coastStartAge, purchases,
+        minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
+      ]);
+
+      // Effective CGT drag on any outside-super withdrawal:
+      // tax = gain × cgtRate, gain = withdrawal × gainShare → drag = cgtRate × gainShare.
+      // To net $X you must sell $X / (1 − drag).
+      const effectiveCgtDrag = (minCgtRate / 100) * (realizedGainShare / 100);
+      const grossWithdrawal = annualSpending / Math.max(1e-9, 1 - effectiveCgtDrag);
+      const cgtTaxBite = grossWithdrawal - annualSpending;
+
+      // Cash-flow sanity: can this salary actually fund spending + planned saving?
+      const superSacrifice = voluntarySuper * 12;
+      const takeHome = annualSalary - superSacrifice - calcIncomeTax(Math.max(0, annualSalary - superSacrifice));
+      const mortgageNow = results.mortOn ? mortgageRepayment * 12 : 0;
+      const cashflowShort = annualSalary > 0
+        ? Math.max(0, annualSpending + mortgageNow + monthlySaving * 12 - takeHome) : 0;
+
+      const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
+      const [projectionMode, setProjectionMode] = useState("full");
+
+      const currentYear = new Date().getFullYear();
+      const annualInvesting = monthlySaving * 12 + voluntarySuper * 12;
+
+      // Pick the active projection. If the chosen mode's milestone isn't reached,
+      // silently fall back to the full-FIRE projection (button is also disabled).
+      const activeProjection =
+        projectionMode === "coast" && results.coastRetire.atAge != null ? results.projectionCoast :
+        projectionMode === "barista" && results.barista.atAge != null ? results.projectionBarista :
+        results.projection;
+      const downshiftAge =
+        projectionMode === "coast" ? results.coastDownshiftAge :
+        projectionMode === "barista" ? results.barista.atAge : null;
+      // Age the active trajectory can no longer fund spending (null = lasts the whole projection)
+      const depletedAge =
+        activeProjection === results.projectionCoast ? results.depletedAge.coast :
+        activeProjection === results.projectionBarista ? results.depletedAge.barista :
+        results.depletedAge.full;
+
+      // In coast mode, when the coast start is delayed past the earliest qualifying age,
+      // mark BOTH on the chart with vertical lines: "can coast" (earliest) and the actual start.
+      const showCoastEarliestMarker =
+        projectionMode === "coast" &&
+        results.coastRetire.atAge != null &&
+        results.coastDownshiftAge > results.coastRetire.atAge;
+
+      return (
+        <div style={{ color: "#c8d5e2", fontFamily: "'DM Sans', sans-serif" }}>
+          {/* Main layout */}
+          <div style={{
+            position: "relative", zIndex: 1,
+            display: "flex", gap: 24, padding: isMobile ? "16px 16px 80px" : "20px 32px 80px",
+            maxWidth: 1400, margin: "0 auto",
+            flexDirection: isMobile ? "column" : "row", flexWrap: "wrap",
+          }}>
+            {/* ──── LEFT PANEL ──── */}
+            <div id="inputs-panel" style={{
+              width: isMobile ? "100%" : 310, minWidth: isMobile ? 0 : 280, flexShrink: 0,
+              order: isMobile ? 2 : 0,
+              background: T.panelBg, border: "1px solid rgba(255,255,255,0.05)",
+              borderRadius: 14, padding: "4px 20px 24px",
+            }}>
+              <Section title="Personal">
+              <SliderInput label="Current Age" value={currentAge} onChange={setCurrentAge} min={18} max={65} step={1} suffix=" yrs" />
+              <SliderInput label="Target Retirement Age" value={targetRetireAge} onChange={setTargetRetireAge} min={Math.max(currentAge + 1, 30)} max={75} step={1} suffix=" yrs" helpText="Full FIRE target" />
+              <SliderInput label="Preservation Age" value={preservationAge} onChange={setPreservationAge} min={55} max={65} step={1} suffix=" yrs" />
+
+              </Section>
+              <Section title="Balances">
+              <SliderInput label="Super Balance" value={superBalance} onChange={setSuperBalance} min={0} max={2000000} step={5000} format="currency" />
+              <SliderInput label="Outside-Super" value={outsideBalance} onChange={setOutsideBalance} min={0} max={2000000} step={5000} format="currency" />
+
+              </Section>
+              <Section title="Income & Saving">
+              <SliderInput label="Annual Salary (gross)" value={annualSalary} onChange={setAnnualSalary} min={0} max={400000} step={5000} format="currency" />
+              <SliderInput label="Real Salary Growth" value={salaryGrowthRate} onChange={setSalaryGrowthRate} min={0} max={5} step={0.25} format="percent"
+                helpText="Growth above inflation (promotions, career progression). Coast/barista incomes stay flat." />
+              <SliderInput label="Voluntary Super (monthly)" value={voluntarySuper} onChange={setVoluntarySuper} min={0} max={5000} step={50} format="currency" />
+              <SliderInput label="Monthly Outside Saving" value={monthlySaving} onChange={setMonthlySaving} min={0} max={15000} step={100} format="currency" />
+
+              </Section>
+              <Section title="Spending">
+              <SliderInput label="Annual Spending (today's $)" value={annualSpending} onChange={setAnnualSpending} min={20000} max={200000} step={1000} format="currency" />
+              {cashflowShort > 0 && (
+                <div style={{
+                  fontSize: 11, color: T.red, lineHeight: 1.5, padding: "8px 10px",
+                  background: "rgba(207,110,110,0.08)", border: "1px solid rgba(207,110,110,0.25)",
+                  borderRadius: 6, marginTop: -6, marginBottom: 12,
+                }}>
+                  ⚠ Spending{mortgageNow > 0 ? " + mortgage" : ""} + saving exceeds estimated take-home pay ({fmt(takeHome)}/yr after tax &amp; super sacrifice)
+                  by <strong>{fmt(cashflowShort)}/yr</strong>. Lower one of them, or the plan assumes money you don't have.
+                </div>
+              )}
+
+              </Section>
+              <Section title="Mortgage" defaultOpen={mortgageRepayment > 0}
+                summary={mortgageRepayment > 0 ? undefined : "None modelled — send it from the Home loan page, or tap to add"}>
+              <SliderInput label="Mortgage Repayment (monthly)" value={mortgageRepayment} onChange={setMortgageRepayment} min={0} max={10000} step={50} format="currency" noMaxClamp
+                helpText="Keep it OUT of Annual Spending — it's added on top until it's paid off. Fixed in dollars, so inflation shrinks it in today's $." />
+              {mortgageRepayment > 0 && (
+                <SliderInput label="Paid Off At Age" value={Math.max(currentAge, mortgagePayoffAge)} onChange={setMortgagePayoffAge}
+                  min={currentAge} max={90} step={1} suffix=" yrs"
+                  helpText={mortgagePayoffAge > targetRetireAge
+                    ? `${mortgagePayoffAge - targetRetireAge} yr${mortgagePayoffAge - targetRetireAge === 1 ? "" : "s"} of repayments after you retire at ${targetRetireAge} — the plan funds them.`
+                    : mortgagePayoffAge > currentAge ? `Paid off before you retire at ${targetRetireAge}.` : "At your current age = already paid off (not modelled)."} />
+              )}
+              <a href="#loan" style={{ fontSize: 11, color: T.accent, textDecoration: "none", fontWeight: 600 }}>Open Home loan calculator →</a>
+
+              </Section>
+              <Section title="Coast Phase Job">
+              <SliderInput label="Coast Job Income (gross)" value={coastJobIncome} onChange={setCoastJobIncome} min={0} max={200000} step={2000} format="currency" noMaxClamp
+                helpText="During Coast FIRE you cover expenses with this. Its SG contributions still flow into super." />
+              {results.coastRetire.atAge != null && results.coastRetire.atAge < targetRetireAge && (
+                <SliderInput label="Coast Start Age"
+                  value={Math.min(targetRetireAge, Math.max(results.coastRetire.atAge, coastStartAge || results.coastRetire.atAge))}
+                  onChange={setCoastStartAge}
+                  min={results.coastRetire.atAge} max={targetRetireAge} step={1} suffix=" yrs"
+                  helpText={`Earliest you can coast is ${results.coastRetire.atAge}. Push this later to keep investing full-time first — your net worth at ${targetRetireAge} grows.`} />
+              )}
+
+              </Section>
+              <Section title="Barista FIRE">
+              <SliderInput label="Barista Income (gross)" value={baristaIncome} onChange={setBaristaIncome} min={0} max={150000} step={2000} format="currency" noMaxClamp
+                helpText="Part-time income that offsets some spending — portfolio fills the gap." />
+
+              </Section>
+              <Section title="Big Purchases" defaultOpen={purchases.length > 0}
+                summary={purchases.length === 0 ? "None — tap to add a house deposit, car, reno…" : undefined}>
+              <div style={{ fontSize: 11, color: T.textDim, marginBottom: 10, fontStyle: "italic", lineHeight: 1.5 }}>
+                One-off lump sums (house deposit, car, reno). Amount is in <strong style={{ color: T.textMid }}>future $ at that age</strong> — we deflate to today's $ before applying.
+              </div>
+              {purchases.map(p => {
+                const yrsAway = Math.max(0, p.age - currentAge);
+                const realToday = p.amount / Math.pow(1 + inflationRate / 100, yrsAway);
+                return (
+                  <div key={p.id} style={{
+                    display: "grid", gridTemplateColumns: "1fr 46px 88px 24px", gap: 5,
+                    marginBottom: 6, alignItems: "center",
+                  }}>
+                    <input type="text" placeholder="Label" value={p.label}
+                      onChange={(e) => updatePurchase(p.id, "label", e.target.value)}
+                      style={{
+                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: "4px 7px", fontSize: 12, color: T.text, outline: "none",
+                        width: "100%", minWidth: 0, fontFamily: "'DM Sans', sans-serif",
+                      }} />
+                    <input type="number" placeholder="Age" value={p.age}
+                      onChange={(e) => updatePurchase(p.id, "age", e.target.value === "" ? "" : parseInt(e.target.value) || 0)}
+                      style={{
+                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: "4px 6px", fontSize: 12, color: T.text, outline: "none",
+                        width: "100%", minWidth: 0, textAlign: "right", ...mono,
+                      }} />
+                    <input type="number" placeholder="$" value={p.amount}
+                      onChange={(e) => updatePurchase(p.id, "amount", e.target.value === "" ? "" : parseFloat(e.target.value) || 0)}
+                      style={{
+                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: "4px 7px", fontSize: 12, color: T.text, outline: "none",
+                        width: "100%", minWidth: 0, textAlign: "right", ...mono,
+                      }} />
+                    <button onClick={() => removePurchase(p.id)} title="Remove"
+                      style={{
+                        background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 4, padding: 0, height: 28, width: 24, cursor: "pointer",
+                        color: T.textDim, fontSize: 14, display: "flex",
+                        alignItems: "center", justifyContent: "center",
+                      }}>×</button>
+                    {p.amount > 0 && yrsAway > 0 && (
+                      <div style={{
+                        gridColumn: "1 / -1",
+                        fontSize: 10, color: T.textDark, marginTop: -2, marginBottom: 4,
+                        textAlign: "right", paddingRight: 32, fontStyle: "italic",
+                      }}>
+                        ≈ {fmt(realToday)} in today's $
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <button onClick={addPurchase}
+                style={{
+                  width: "100%", background: "transparent",
+                  border: "1px dashed rgba(255,255,255,0.15)", borderRadius: 6,
+                  padding: "7px 12px", cursor: "pointer", color: T.textMid,
+                  fontSize: 12, fontWeight: 600, marginTop: 4,
+                  fontFamily: "'DM Sans', sans-serif",
+                }}>+ Add Purchase</button>
+
+              </Section>
+              <Section title="Assumptions & Tax" defaultOpen={false}
+                summary={`Return ${returnRate}% · Inflation ${inflationRate}% · SG ${sgRate}% · SWR ${swr}% — tap to adjust`}>
+              <SliderInput label="Nominal Return" value={returnRate} onChange={setReturnRate} min={3} max={12} step={0.5} format="percent" />
+              <SliderInput label="Inflation" value={inflationRate} onChange={setInflationRate} min={0} max={6} step={0.5} format="percent"
+                helpText="Set to 0% to read the projection as nominal future dollars (no discounting to today's $)." />
+              <SliderInput label="SG Rate" value={sgRate} onChange={setSgRate} min={9} max={15} step={0.5} format="percent" />
+              <SliderInput label="Super Earnings Tax" value={superEarningsTax} onChange={setSuperEarningsTax} min={0} max={30} step={1} format="percent" />
+              <SliderInput label="Min CGT Rate" value={minCgtRate} onChange={setMinCgtRate} min={0} max={50} step={1} format="percent"
+                helpText="2026 budget: 30% floor, no holding-period discount." />
+              <SliderInput label="Realized Gain Share" value={realizedGainShare} onChange={setRealizedGainShare} min={0} max={100} step={5} format="percent"
+                helpText={`% of each withdrawal treated as taxable gain. 100% = $100k out → $${(minCgtRate * 1000).toLocaleString()} tax → $${(100000 - minCgtRate * 1000).toLocaleString()} net. Effective drag: ${(effectiveCgtDrag * 100).toFixed(1)}%.`} />
+              <SliderInput label="Safe Withdrawal Rate" value={swr} onChange={setSwr} min={2.5} max={6} step={0.25} format="percent" />
+              </Section>
+
+              <div style={{
+                marginTop: 20, padding: "10px 12px", borderRadius: 8,
+                background: T.accentBg, border: `1px solid ${T.accentBorder}`,
+                fontSize: 11, color: T.textMid, lineHeight: 1.5,
+              }}>
+                <strong style={{ color: T.accent }}>Synced with FIRE Suite.</strong><br/>
+                Edits here update FIRE Suite's inputs (and vice-versa) via localStorage.
+              </div>
+
+              <button onClick={() => {
+                if (confirm("Reset ALL inputs to defaults? This clears the saved FIRE inputs on this device (also shared with FIRE Suite).")) {
+                  localStorage.removeItem(FIRE_STORAGE_KEY);
+                  localStorage.removeItem(MS_STORAGE_KEY);
+                  location.reload();
+                }
+              }} style={{
+                width: "100%", marginTop: 12, padding: "8px 12px", borderRadius: 6,
+                background: "transparent", border: "1px solid rgba(207,110,110,0.25)",
+                color: T.textDim, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif",
+              }}>↺ Reset all inputs to defaults</button>
+            </div>
+
+            {/* ──── RIGHT PANEL ──── */}
+            <div style={{ flex: 1, minWidth: 0, order: isMobile ? 1 : 0 }}>
+
+              {/* Current Snapshot */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
+                    Current Snapshot
+                  </div>
+                  {isMobile && (
+                    <button onClick={() => { const el = document.getElementById("inputs-panel"); if (el) el.scrollIntoView({ behavior: "smooth" }); }}
+                      style={{
+                        padding: "4px 12px", borderRadius: 999, cursor: "pointer",
+                        background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                        color: T.accent, fontSize: 11, fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+                      }}>⚙ Adjust inputs</button>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <StatCard label="FIRE Progress" value={`${Math.min(999, Math.round((superBalance + outsideBalance) / results.fireNumber * 100))}%`}
+                    sub={`of ${fmt(results.fireNumber)} FIRE number`} color={T.accent}
+                    progress={(superBalance + outsideBalance) / results.fireNumber} />
+                  <StatCard label="Portfolio (invested)" value={fmt(superBalance + outsideBalance)} sub="super + outside" color={T.text} />
+                  <StatCard label="Annual Spending" value={fmt(annualSpending)} sub={`${swr}% SWR target`} color={T.purple} />
+                  <StatCard label="Annual Investing" value={fmt(annualInvesting)} sub="contributions/yr" color={T.teal} />
+                  <StatCard label="Current Age" value={currentAge} sub={`target retire ${targetRetireAge}`} color={T.indigo} />
+                </div>
+              </div>
+
+              {/* Withdrawal Breakdown (bridge years — drawing from outside-super) */}
+              <div style={{
+                background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+                borderRadius: 12, padding: "14px 18px", marginBottom: 16,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
+                    Withdrawal Breakdown
+                  </div>
+                  <div style={{ fontSize: 10, color: T.textDim, fontStyle: "italic" }}>
+                    Bridge years · drawing from outside-super · effective CGT drag {(effectiveCgtDrag * 100).toFixed(1)}%
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
+                  {/* Net spending */}
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.02)", border: `1px solid ${T.panelBorder}`,
+                  }}>
+                    <div style={{ fontSize: 10, color: T.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                      Net spending (target)
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.purple, ...mono, lineHeight: 1.2 }}>
+                      {fmt(annualSpending)}<span style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>/yr</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.textMid, ...mono, marginTop: 2 }}>
+                      {fmt(annualSpending / 12)}<span style={{ fontSize: 11, color: T.textDim }}>/mo</span>
+                    </div>
+                  </div>
+                  {/* CGT tax bite */}
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.02)", border: `1px solid ${T.panelBorder}`,
+                  }}>
+                    <div style={{ fontSize: 10, color: T.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                      CGT tax bite
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.red, ...mono, lineHeight: 1.2 }}>
+                      {fmt(cgtTaxBite)}<span style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>/yr</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.textMid, ...mono, marginTop: 2 }}>
+                      {fmt(cgtTaxBite / 12)}<span style={{ fontSize: 11, color: T.textDim }}>/mo</span>
+                    </div>
+                  </div>
+                  {/* Gross withdrawal */}
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 8,
+                    background: T.accentBg, border: `1px solid ${T.accentBorder}`,
+                  }}>
+                    <div style={{ fontSize: 10, color: T.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                      Gross withdrawal needed
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.accent, ...mono, lineHeight: 1.2 }}>
+                      {fmt(grossWithdrawal)}<span style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>/yr</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.accentLight, ...mono, marginTop: 2 }}>
+                      {fmt(grossWithdrawal / 12)}<span style={{ fontSize: 11, color: T.textDim }}>/mo</span>
+                    </div>
+                    <div style={{
+                      fontSize: 11, color: T.textMid, marginTop: 6, paddingTop: 6,
+                      borderTop: `1px solid ${T.accentBorder}`, ...mono,
+                    }}>
+                      Net: <span style={{ color: T.purple }}>{fmt(annualSpending)}</span><span style={{ color: T.textDim }}>/yr</span>
+                      <span style={{ color: T.textDim }}> · </span>
+                      <span style={{ color: T.purple }}>{fmt(annualSpending / 12)}</span><span style={{ color: T.textDim }}>/mo</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: T.textDim, marginTop: 10, lineHeight: 1.5, fontStyle: "italic" }}>
+                  To net {fmt(annualSpending)}/yr from outside-super you must sell {fmt(grossWithdrawal)} — the extra {fmt(cgtTaxBite)} is CGT
+                  ({realizedGainShare}% × {minCgtRate}% = {(effectiveCgtDrag * 100).toFixed(1)}% drag).
+                  Post-preservation super withdrawals stay tax-free (pension phase).
+                </div>
+              </div>
+
+              {/* FIRE Milestones */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid, marginBottom: 10 }}>
+                  FIRE Milestones
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
+                  <MilestoneCard milestone={results.coastRetire} pillBg={`${T.green}15`} pillBorder={`${T.green}40`} pillColor={T.green} currentYear={currentYear} currentAge={currentAge}
+                    currentPortfolio={superBalance + outsideBalance} active={projectionMode === "coast"}
+                    selectable={results.coastRetire.atAge != null} onSelect={() => setProjectionMode("coast")} />
+                  <MilestoneCard milestone={results.barista} pillBg={`${T.accent}15`} pillBorder={`${T.accent}40`} pillColor={T.accent} currentYear={currentYear} currentAge={currentAge}
+                    currentPortfolio={superBalance + outsideBalance} active={projectionMode === "barista"}
+                    selectable={results.barista.atAge != null} onSelect={() => setProjectionMode("barista")} />
+                  <MilestoneCard milestone={results.fullFire} pillBg={`${T.indigo}15`} pillBorder={`${T.indigo}40`} pillColor={T.indigo} currentYear={currentYear} currentAge={currentAge}
+                    currentPortfolio={superBalance + outsideBalance} active={projectionMode === "full"}
+                    selectable={true} onSelect={() => setProjectionMode("full")} />
+                </div>
+              </div>
+
+              {/* Full FIRE details strip */}
+              <div style={{
+                background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+                borderRadius: 12, padding: "16px 20px", marginBottom: 20,
+              }}>
+                <div style={{
+                  display: "inline-block", padding: "3px 10px", borderRadius: 12,
+                  background: `${T.indigo}15`, border: `1px solid ${T.indigo}40`,
+                  color: T.indigo, fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", marginBottom: 12,
+                }}>FULL FIRE DETAILS</div>
+                <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginBottom: 2 }}>Target year</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: T.indigo, ...mono }}>
+                      {results.fullFire.atAge != null ? currentYear + (results.fullFire.atAge - currentAge) : "—"}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
+                      {results.fullFire.atAge != null
+                        ? `Age ${results.fullFire.atAge} · ${results.fullFire.yearsAway} years away`
+                        : "Not reached by 100"}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginBottom: 2 }}>FIRE number (today's $)</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: T.accent, ...mono }}>
+                      {fmt(results.fireNumber)}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
+                      {fmt(annualSpending)}/yr × {+(100 / swr).toFixed(1)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginBottom: 2 }}>Projected portfolio at FIRE</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: T.green, ...mono }}>
+                      {results.fullFire.atAge != null ? fmt(results.fullFire.projectedPortfolio) : "—"}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
+                      starting from {fmt(superBalance + outsideBalance)} today
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Portfolio Growth Projection */}
+              <div style={{
+                background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+                borderRadius: 12, padding: "20px 12px 12px 0",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingLeft: 20, paddingRight: 16, marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>
+                      Portfolio Growth Projection
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {[
+                        { id: "full", label: "Full FIRE", color: T.indigo, enabled: true },
+                        { id: "coast", label: "Coast FIRE", color: T.green, enabled: results.coastRetire.atAge != null },
+                        { id: "barista", label: "Barista FIRE", color: T.accent, enabled: results.barista.atAge != null },
+                      ].map(btn => {
+                        const active = projectionMode === btn.id;
+                        return (
+                          <button key={btn.id}
+                            onClick={() => btn.enabled && setProjectionMode(btn.id)}
+                            disabled={!btn.enabled}
+                            title={btn.enabled ? `Show ${btn.label} trajectory` : `${btn.label} milestone not reached with current inputs`}
+                            style={{
+                              padding: "3px 10px", borderRadius: 4,
+                              cursor: btn.enabled ? "pointer" : "not-allowed",
+                              background: active ? `${btn.color}15` : "transparent",
+                              border: `1px solid ${active ? `${btn.color}60` : "rgba(255,255,255,0.08)"}`,
+                              color: active ? btn.color : (btn.enabled ? T.textDim : T.textDark),
+                              opacity: btn.enabled ? 1 : 0.4,
+                              fontSize: 11, fontWeight: 600, ...mono,
+                              transition: "all 0.15s",
+                            }}>{btn.label}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, color: T.textDim }}>Show to age</span>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {[
+                        { label: String(Math.min(targetRetireAge, 65)), val: Math.min(targetRetireAge, 65) },
+                        { label: "65", val: 65 },
+                        { label: "75", val: 75 },
+                        { label: "90", val: 90 },
+                      ].filter((b, i, arr) => arr.findIndex(a => a.val === b.val) === i) // dedupe
+                       .sort((a, b) => a.val - b.val)
+                       .map(btn => (
+                        <button key={btn.val} onClick={() => setChartEndAge(btn.val)}
+                          style={{
+                            padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                            background: chartEndAge === btn.val ? T.accentBg : "transparent",
+                            border: `1px solid ${chartEndAge === btn.val ? T.accentDim : "rgba(255,255,255,0.08)"}`,
+                            color: chartEndAge === btn.val ? T.accent : T.textDim,
+                            fontSize: 11, fontWeight: 600, ...mono,
+                            transition: "all 0.15s",
+                          }}>{btn.label}</button>
+                      ))}
+                    </div>
+                    <input type="range" min={currentAge + 5} max={90} step={1} value={chartEndAge}
+                      onChange={(e) => setChartEndAge(parseInt(e.target.value))}
+                      style={{ width: 80, accentColor: T.accent, height: 4 }}
+                    />
+                    <span style={{ fontSize: 11, color: T.accent, ...mono, minWidth: 20 }}>{chartEndAge}</span>
+                  </div>
+                </div>
+                {/* Trajectory description */}
+                <div style={{ paddingLeft: 20, paddingRight: 16, marginBottom: 8, fontSize: 11, color: T.textDim, fontStyle: "italic" }}>
+                  {projectionMode === "full" && (
+                    <>Save full-time until age {targetRetireAge}, then fully retire. Outside funds the bridge to preservation age.</>
+                  )}
+                  {projectionMode === "coast" && results.coastRetire.atAge != null && (
+                    <>Save full-time until age {results.coastDownshiftAge}, then downshift to coast job until age {targetRetireAge}, then fully retire.{" "}
+                    {results.coastDownshiftAge > results.coastRetire.atAge && <>(Earliest you could coast is {results.coastRetire.atAge}.) </>}
+                    Net worth at {targetRetireAge}: <strong style={{ color: T.green }}>{fmt(results.coastProjectedAtRetire)}</strong>.</>
+                  )}
+                  {projectionMode === "coast" && results.coastRetire.atAge == null && (
+                    <>Coast FIRE not reachable with current inputs — showing Full FIRE trajectory.</>
+                  )}
+                  {projectionMode === "barista" && results.barista.atAge != null && (
+                    <>Save full-time until age {results.barista.atAge}, then downshift to barista work until age {targetRetireAge}, then fully retire.</>
+                  )}
+                  {projectionMode === "barista" && results.barista.atAge == null && (
+                    <>Barista FIRE not reachable with current inputs — showing Full FIRE trajectory.</>
+                  )}
+                </div>
+                {results.mortOn && (
+                  <div style={{ paddingLeft: 20, paddingRight: 16, marginBottom: 6, fontSize: 11, color: T.purple }}>
+                    Includes mortgage repayments of {fmtFull(mortgageRepayment)}/mo until age {mortgagePayoffAge}
+                    {mortgagePayoffAge > targetRetireAge ? ` — ${mortgagePayoffAge - targetRetireAge} year${mortgagePayoffAge - targetRetireAge === 1 ? "" : "s"} into retirement.` : " (paid off before retirement)."}
+                  </div>
+                )}
+                {/* Plan health: does the money last? */}
+                <div style={{ paddingLeft: 20, paddingRight: 16, marginBottom: 8, fontSize: 12, lineHeight: 1.5 }}>
+                  {depletedAge != null ? (
+                    <span style={{ color: T.red }}>
+                      ⚠ <strong>Money runs out at age {depletedAge}</strong>
+                      {depletedAge < preservationAge
+                        ? ` — outside-super can't cover spending/purchases and super stays locked until ${preservationAge}.`
+                        : ` — super and outside-super are both exhausted.`}
+                      {activeProjection === results.projection && results.fullFire.atAge != null && results.fullFire.atAge > targetRetireAge &&
+                        ` Retiring at ${targetRetireAge} is before your Full FIRE age (${results.fullFire.atAge}).`}
+                    </span>
+                  ) : (
+                    <span style={{ color: T.green }}>✓ Portfolio lasts past age {results.projectionEndAge} on this trajectory.</span>
+                  )}
+                </div>
+                <ResponsiveContainer width="100%" height={isMobile ? 320 : 460}>
+                  <ComposedChart data={activeProjection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 72, left: 20, bottom: 5 }}>
+                    <defs>
+                      <linearGradient id="msSuperGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#818cf8" stopOpacity={0.6} />
+                        <stop offset="95%" stopColor="#818cf8" stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="msOutsideGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.6} />
+                        <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                    <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} />
+                    <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} width={70} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Area type="monotone" dataKey="outside" stackId="nw" stroke="#2dd4bf" fill="url(#msOutsideGrad)" strokeWidth={1.5} name="Outside-Super" isAnimationActive={false} />
+                    <Area type="monotone" dataKey="super" stackId="nw" stroke="#818cf8" fill="url(#msSuperGrad)" strokeWidth={1.5} name="Super" isAnimationActive={false} />
+                    <Line type="monotone" dataKey="total" stroke={T.text} strokeWidth={2.5} dot={false} name="Total Portfolio" isAnimationActive={false} />
+                    {/* Today marker */}
+                    <ReferenceLine x={currentAge} stroke={T.teal} strokeOpacity={0.35}
+                      label={{ value: "Now", position: "insideTopLeft", fill: T.teal, fontSize: 9, fontWeight: 600, dy: 30 }} />
+                    {/* Horizontal FIRE number — always shown */}
+                    <ReferenceLine y={results.fireNumber} stroke={T.accent} strokeDasharray="6 4" strokeOpacity={0.7}
+                      label={{ value: "FIRE", fill: T.accent, fontSize: 11, fontWeight: 600, position: "right" }} />
+                    {/* Mode-specific vertical markers */}
+                    {projectionMode === "full" && results.fullFire.atAge != null && results.fullFire.atAge < 100 && (
+                      <ReferenceLine x={results.fullFire.atAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: `Full FIRE`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {/* Earliest age you COULD coast ("can coast") — only when actual start is delayed.
+                        Label sits UPPER-LEFT so it never collides with the actual-coast label below-right. */}
+                    {showCoastEarliestMarker && (
+                      <ReferenceLine x={results.coastRetire.atAge} stroke={T.textMid} strokeDasharray="3 3" strokeOpacity={0.5}
+                        label={{ value: `Can coast ${results.coastRetire.atAge}`, position: "insideTopLeft", fill: T.textMid, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {/* Actual coast start (chosen) — dropped to a lower level (dy 30) so it clears "Can coast" */}
+                    {projectionMode === "coast" && downshiftAge != null && (
+                      <ReferenceLine x={downshiftAge} stroke={T.green} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: showCoastEarliestMarker ? `Coast ${downshiftAge}` : `Coast →`, position: "insideTopRight", fill: T.green, fontSize: 10, fontWeight: 600, dy: showCoastEarliestMarker ? 30 : 12 }} />
+                    )}
+                    {projectionMode === "barista" && downshiftAge != null && (
+                      <ReferenceLine x={downshiftAge} stroke={T.accent} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: `Barista →`, position: "insideTopRight", fill: T.accent, fontSize: 10, fontWeight: 600, dy: 12 }} />
+                    )}
+                    {/* Retire marker (when in coast/barista mode, this is when full retirement starts).
+                        In delayed-coast mode it drops another level to clear the actual-coast label. */}
+                    {(projectionMode === "coast" || projectionMode === "barista") && downshiftAge != null && targetRetireAge !== downshiftAge && (
+                      <ReferenceLine x={targetRetireAge} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
+                        label={{ value: `Retire ${targetRetireAge}`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600, dy: showCoastEarliestMarker ? 48 : 30 }} />
+                    )}
+                    <ReferenceLine x={preservationAge} stroke={T.textMid} strokeDasharray="2 4" strokeOpacity={0.3}
+                      label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: showCoastEarliestMarker ? 64 : 48 }} />
+                    {results.mortOn && results.mortgageEndAge <= chartEndAge && (
+                      <ReferenceLine x={results.mortgageEndAge} stroke={T.purple} strokeDasharray="2 4" strokeOpacity={0.5}
+                        label={{ value: `Mortgage-free ${results.mortgageEndAge}`, position: "insideBottomLeft", fill: T.purple, fontSize: 9, fontWeight: 600, dy: -34 }} />
+                    )}
+                    {depletedAge != null && depletedAge <= chartEndAge && (
+                      <ReferenceLine x={depletedAge} stroke={T.red} strokeOpacity={0.7}
+                        label={{ value: `Runs out ${depletedAge}`, position: "insideBottomLeft", fill: T.red, fontSize: 10, fontWeight: 600, dy: -18 }} />
+                    )}
+                    {/* Big-purchase markers */}
+                    {purchases.filter(p => p.amount > 0 && p.age >= currentAge && p.age <= chartEndAge).map(p => (
+                      <ReferenceLine key={p.id} x={p.age} stroke={T.red} strokeDasharray="2 3" strokeOpacity={0.45}
+                        label={{ value: `${p.label || "Purchase"} ${fmt(p.amount)}`, position: "insideBottomRight", fill: T.red, fontSize: 9, fontWeight: 600, dy: -4 }} />
+                    ))}
+                    <Legend verticalAlign="top" height={36}
+                      formatter={(val) => <span style={{ color: T.textMid, fontSize: 11 }}>{val}</span>} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Export buttons */}
+              <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+                <button className="ms-export-btn" onClick={() => exportToExcel({ ...fireInputs, ...msInputs }, results)}
+                  style={{
+                    padding: "9px 20px", borderRadius: 8, cursor: "pointer",
+                    background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                    color: T.accent, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+                  }}>Export to Excel</button>
+                <button className="ms-export-btn" onClick={() => exportToCSV(results)}
+                  style={{
+                    padding: "9px 20px", borderRadius: 8, cursor: "pointer",
+                    background: T.accentBg, border: `1px solid ${T.accentDim}`,
+                    color: T.accent, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+                  }}>Download CSV</button>
+              </div>
+
+              {/* Assumptions footer */}
+              <div style={{
+                marginTop: 16, padding: "12px 16px", borderRadius: 8,
+                background: "rgba(255,255,255,0.015)", border: `1px solid ${T.panelBorder}`,
+                fontSize: 11, color: T.textDim, lineHeight: 1.7,
+              }}>
+                <strong style={{ color: T.textMid }}>Assumptions:</strong>{" "}
+                Spending {fmt(annualSpending)}/yr (today's $) ·
+                Contributions {fmt(annualInvesting)}/yr ·
+                Return {returnRate}% nominal ({results.realRetOut.toFixed(2)}% real outside, {results.realRetSuper.toFixed(2)}% real super) ·
+                Inflation {inflationRate}% ·
+                Starting portfolio {fmt(superBalance + outsideBalance)} ·
+                FIRE number = spending ÷ {swr}% SWR ·
+                Coast FIRE uses portfolio + ongoing SG only (no voluntary contributions) ·
+                Income tax: 2026-27 brackets + LITO + Medicare levy (low-income shade-in) ·
+                Concessional cap $30k{results.mortOn ? ` · Mortgage ${fmtFull(mortgageRepayment)}/mo (nominal) until ${mortgagePayoffAge}` : ""}{salaryGrowthRate > 0 ? ` · Real salary growth ${salaryGrowthRate}%/yr` : ""} ·
+                All figures in today's dollars · Projections are estimates, not guarantees.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── MILESTONE CARD COMPONENT ───
+    // ══════════════════════════════════════════════════════════
+    function MilestoneCard({ milestone, pillBg, pillBorder, pillColor, currentYear, currentAge, currentPortfolio, active, selectable, onSelect }) {
+      const m = milestone;
+      const isReady = m.atAge != null && m.atAge <= currentAge;
+      const isFuture = m.atAge != null && m.atAge > currentAge;
+      const isNever = m.atAge == null;
+      // Progress toward the portfolio needed at this milestone's trigger point
+      const progress = isReady ? 1
+        : (m.requiredPortfolio > 0 && currentPortfolio != null ? currentPortfolio / m.requiredPortfolio : null);
+
+      return (
+        <div className="ms-card"
+          onClick={selectable ? onSelect : undefined}
+          title={selectable ? "Show this trajectory on the chart" : undefined}
+          style={{
+            background: active ? `${pillColor}08` : T.panelBg,
+            border: `1px solid ${active ? `${pillColor}50` : T.panelBorder}`,
+            borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column",
+            cursor: selectable ? "pointer" : "default",
+          }}>
+          <div style={{
+            display: "inline-block", padding: "3px 10px", borderRadius: 12,
+            background: pillBg, border: `1px solid ${pillBorder}`,
+            color: pillColor, fontSize: 10, fontWeight: 700, letterSpacing: "0.05em",
+            alignSelf: "flex-start", marginBottom: 10,
+          }}>{m.pillLabel}</div>
+
+          <div style={{ fontSize: 13, color: T.textMid, marginBottom: 8, lineHeight: 1.4 }}>
+            {m.subtitle}
+          </div>
+
+          {isReady && (
+            <>
+              <div style={{ fontSize: 24, fontWeight: 800, color: T.green, ...mono, lineHeight: 1.1 }}>
+                Already <br/>there ✓
+              </div>
+              <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
+                Age {currentAge} · {currentYear}
+              </div>
+            </>
+          )}
+          {isFuture && (
+            <>
+              <div style={{ fontSize: 26, fontWeight: 800, color: pillColor, ...mono, lineHeight: 1.1 }}>
+                ~{currentYear + (m.atAge - currentAge)}
+              </div>
+              <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
+                Age ~{m.atAge} · {m.atAge - currentAge} years away
+              </div>
+            </>
+          )}
+          {isNever && (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 800, color: T.red, ...mono, lineHeight: 1.1 }}>
+                Not reached
+              </div>
+              <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
+                by age 100 with current plan
+              </div>
+            </>
+          )}
+
+          {progress != null && !isNever && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                <div style={{
+                  width: `${Math.min(100, Math.max(0, progress * 100))}%`, height: "100%",
+                  borderRadius: 3, background: pillColor, transition: "width 0.3s",
+                }} />
+              </div>
+              <div style={{ fontSize: 10, color: T.textDim, marginTop: 4, ...mono }}>
+                {Math.min(999, Math.round(progress * 100))}% of the {fmt(m.requiredPortfolio)} needed
+              </div>
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, color: T.textDim, marginTop: 12, lineHeight: 1.5 }}>
+            {m.explanation}
+          </div>
+
+          {selectable && (
+            <div style={{
+              fontSize: 10, fontWeight: 600, marginTop: "auto", paddingTop: 10,
+              color: active ? pillColor : T.textDark, letterSpacing: "0.04em",
+            }}>
+              {active ? "● shown on chart" : "view on chart →"}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── CALCULATION ENGINE (pure function) ───
+    // ══════════════════════════════════════════════════════════
+    function computeAll(opts) {
+      const {
+        currentAge, targetRetireAge, preservationAge,
+        superBalance, outsideBalance,
+        annualSalary, voluntarySuper, monthlySaving, annualSpending,
+        returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
+        coastJobIncome, baristaIncome, coastStartAge, purchases,
+        minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
+      } = opts;
+
+      const nomRet = returnRate / 100;
+      const infl = inflationRate / 100;
+      const sg = sgRate / 100;
+      const swrDec = swr / 100;
+      const sTax = superEarningsTax / 100;
+      const cap = 30000;
+
+      // Effective CGT drag on any sale of outside-super assets (drawdown or purchase).
+      // gain = withdrawal × realizedGainShare; tax = gain × minCgtRate
+      // To net $N, gross sale = N / (1 − drag).
+      const cgtDrag = (Math.max(0, minCgtRate || 0) / 100) * (Math.max(0, realizedGainShare || 0) / 100);
+      const grossUp = (net) => (cgtDrag >= 1 ? net * 1e9 : net / (1 - cgtDrag));
+
+      const realRetOut = (1 + nomRet) / (1 + infl) - 1;
+      const realRetSuper = (1 + nomRet * (1 - sTax)) / (1 + infl) - 1;
+      const realRetSuperPension = (1 + nomRet) / (1 + infl) - 1;
+      const annualOutsideSaving = monthlySaving * 12;
+      const fireNumber = annualSpending / swrDec;
+
+      // Real salary growth (above inflation). Whole sim runs in today's $, so this is
+      // growth beyond CPI — promotions/career progression, not indexation.
+      // Coast/barista job incomes deliberately stay flat.
+      const salGrow = Math.max(0, salaryGrowthRate || 0) / 100;
+      const salaryAtAge = (age) => annualSalary * Math.pow(1 + salGrow, Math.max(0, age - currentAge));
+
+      // ─── Purchases helper ───
+      // User enters amount in NOMINAL future $ at the purchase age. The whole
+      // simulation runs in REAL (today's) $, so we deflate to today's $ before
+      // applying. Multiple purchases at the same age are summed.
+      const purchaseList = (purchases || []).filter(p => p && p.amount > 0 && p.age >= currentAge);
+      const purchaseRealAtAge = (age) => {
+        let sum = 0;
+        for (const p of purchaseList) {
+          if (p.age === age) {
+            sum += p.amount / Math.pow(1 + infl, Math.max(0, age - currentAge));
+          }
+        }
+        return sum;
+      };
+
+      // ─── Mortgage (optional, from the Home loan page) ───
+      // Repayments continue until mortgagePayoffAge on top of annualSpending. They're fixed in
+      // nominal dollars, so in this today's-$ simulation they shrink with inflation each year.
+      // While working full-time the repayment is assumed to come out of salary before saving.
+      const mortOn = (mortgageRepayment || 0) > 0 && (mortgagePayoffAge || 0) > currentAge;
+      const mortAt = (age) => (mortOn && age < mortgagePayoffAge)
+        ? mortgageRepayment * 12 / Math.pow(1 + infl, Math.max(0, age - currentAge)) : 0;
+      // Present value at `age` of the repayments still to come — extra assets needed on top of
+      // the FIRE number when a milestone is tested before the loan is paid off.
+      const mortPVFrom = (age) => {
+        if (!mortOn) return 0;
+        let pv = 0;
+        for (let a = age; a < mortgagePayoffAge; a++) pv += mortAt(a) / Math.pow(1 + realRetOut, a - age);
+        return pv;
+      };
+
+      // ─── Bridge fund (PV annuity) ───
+      const bridgePV = (yrs, annualGap) => {
+        if (yrs <= 0 || annualGap <= 0) return 0;
+        if (realRetOut <= 0) return annualGap * yrs;
+        return annualGap * (1 - Math.pow(1 + realRetOut, -yrs)) / realRetOut;
+      };
+
+      // ─── Coast job analysis (used by canCoastAt) ───
+      // During the coast phase you work a job that covers expenses. The SG from
+      // that job continues flowing into super (employer pays it regardless).
+      // If the coast job doesn't fully cover spending, the gap is drawn from outside.
+      // If it over-covers, the surplus is NOT added to outside (this is "coasting",
+      // not aggressive saving — that would defeat the purpose).
+      const coastJobContribs = calcYearContribs(coastJobIncome, sg, 0, cap);
+      const coastJobNetIncome = coastJobContribs.netSalary;
+      const coastJobNetSuper = coastJobContribs.netSuperContrib;
+      const coastJobGap = Math.max(0, annualSpending - coastJobNetIncome);
+      const coastGapAt = (age) => Math.max(0, annualSpending + mortAt(age) - coastJobNetIncome);
+
+      // ─── canCoastAt: at age A with sNow/oNow, can I stop investing
+      //    AND retire at retireAge funding annualSpending? ───
+      // Coast phase (age → retireAge): no voluntary saving. Coast job SG flows
+      // into super each year. Outside-super covers any shortfall vs spending.
+      // Retirement phase (retireAge → preservationAge): outside-super funds the
+      // bridge (full annualSpending). Combined assets at preservation must yield
+      // enough to support spending for life.
+      // (Year-by-year so purchases can be applied at the right age.)
+      const canCoastAt = (age, sNow, oNow, retireAge) => {
+        let s = sNow, o = oNow;
+        // Coast phase
+        for (let a = age; a < retireAge; a++) {
+          const purchase = purchaseRealAtAge(a);
+          if (purchase > 0) o = o - grossUp(purchase);
+          if (o < 0) return false;
+          s = s * (1 + realRetSuper) + coastJobNetSuper;
+          o = o * (1 + realRetOut) - grossUp(coastGapAt(a));
+          if (o < 0) return false;
+        }
+        if (retireAge >= preservationAge) {
+          return (s + o) >= fireNumber + mortPVFrom(retireAge);
+        }
+        // Bridge phase: outside funds full spending until preservation
+        for (let a = retireAge; a < preservationAge; a++) {
+          const purchase = purchaseRealAtAge(a);
+          if (purchase > 0) o = o - grossUp(purchase);
+          if (o < 0) return false;
+          s = s * (1 + realRetSuper);
+          o = o * (1 + realRetOut) - grossUp(annualSpending + mortAt(a));
+          if (o < 0) return false;
+        }
+        return (s + o) >= fireNumber + mortPVFrom(preservationAge);
+      };
+
+      // ─── Find Coast FIRE age (with given retireAge target) ───
+      const findCoastAge = (retireAge) => {
+        let sS = superBalance, sO = outsideBalance;
+        for (let age = currentAge; age <= 100; age++) {
+          if (age > retireAge) return null;
+          if (canCoastAt(age, sS, sO, retireAge)) return age;
+          // Save another year (full saving phase, NOT coasting yet)
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) sO = Math.max(0, sO - grossUp(purchase));
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
+          sS = sS * (1 + realRetSuper) + c.netSuperContrib;
+          sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        return null;
+      };
+
+      // ─── Find Barista FIRE downshift age ───
+      // New definition (2026-04): you downshift to part-time work (baristaIncome) at
+      // baristaAge and keep doing barista work UNTIL targetRetireAge. Then you fully
+      // retire. So the question is: what's the EARLIEST age you can downshift to
+      // barista AND still hit Full FIRE by targetRetireAge (with bridge to preservation
+      // age handled correctly)?
+      //
+      // During the barista phase: barista job's SG flows into super, voluntary super
+      // and outside saving stop. If barista net income < annual spending, the gap is
+      // drawn from outside-super each year.
+      //
+      // After targetRetireAge: full retirement — outside funds the bridge to
+      // preservation, then super takes over. Test the same way Full FIRE is tested.
+
+      const baristaNetIncome = baristaIncome - calcIncomeTax(baristaIncome);
+      const baristaSpendingGap = Math.max(0, annualSpending - baristaNetIncome);
+      const baristaGapAt = (age) => Math.max(0, annualSpending + mortAt(age) - baristaNetIncome);
+      const baristaSGContrib = calcYearContribs(baristaIncome, sg, 0, cap);
+
+      // Simulate the full plan for a given downshift age. Returns the (super, outside)
+      // pair at targetRetireAge if no negative balances along the way; null otherwise.
+      const simulateBaristaPath = (downshiftAge) => {
+        let s = superBalance, o = outsideBalance;
+        // Phase 1: full-time work, currentAge → downshiftAge − 1
+        for (let age = currentAge; age < downshiftAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = o - grossUp(purchase);
+          if (o < 0) return null;
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
+          s = s * (1 + realRetSuper) + c.netSuperContrib;
+          o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        // Phase 2: barista, downshiftAge → targetRetireAge − 1
+        for (let age = downshiftAge; age < targetRetireAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = o - grossUp(purchase);
+          if (o < 0) return null;
+          s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
+          o = o * (1 + realRetOut) - grossUp(baristaGapAt(age));
+          if (o < 0) return null; // outside ran out during barista years
+        }
+        return { s, o };
+      };
+
+      // Does a given (super, outside) pair at targetRetireAge survive full retirement?
+      const survivesFullRetirement = (sAtRet, oAtRet) => {
+        if (targetRetireAge >= preservationAge) {
+          return (sAtRet + oAtRet) * swrDec >= annualSpending + mortPVFrom(targetRetireAge) * swrDec;
+        }
+        // Bridge years: outside must fund spending until preservation
+        let s = sAtRet, o = oAtRet;
+        for (let age = targetRetireAge; age < preservationAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = o - grossUp(purchase);
+          if (o < 0) return false;
+          s = s * (1 + realRetSuper);
+          o = o * (1 + realRetOut) - grossUp(annualSpending + mortAt(age));
+          if (o < 0) return false;
+        }
+        // At preservation, combined super + outside must support spending at SWR.
+        // (Consistent with the Full FIRE test — outside-super is still accessible after
+        // preservation, so it must count. Using super alone made Barista unreachable even
+        // with a large barista income, since SG is capped at the concessional cap and the
+        // income mostly builds OUTSIDE wealth.)
+        return (s + o) >= fireNumber + mortPVFrom(preservationAge);
+      };
+
+      const findBaristaAge = () => {
+        for (let age = currentAge; age <= targetRetireAge; age++) {
+          const end = simulateBaristaPath(age);
+          if (end && survivesFullRetirement(end.s, end.o)) return age;
+        }
+        return null;
+      };
+
+      // ─── Find Full FIRE age ───
+      // Year-by-year so purchases can land at the correct age. For each candidate
+      // retire age, simulate the bridge years and check that combined assets at
+      // preservation satisfy the FIRE number (annualSpending / SWR).
+      const canFullyRetireAt = (retireAge, sNow, oNow) => {
+        let s = sNow, o = oNow;
+        if (retireAge >= preservationAge) {
+          return (s + o) >= fireNumber + mortPVFrom(retireAge);
+        }
+        for (let a = retireAge; a < preservationAge; a++) {
+          const purchase = purchaseRealAtAge(a);
+          if (purchase > 0) o = o - grossUp(purchase);
+          if (o < 0) return false;
+          s = s * (1 + realRetSuper);
+          o = o * (1 + realRetOut) - grossUp(annualSpending + mortAt(a));
+          if (o < 0) return false;
+        }
+        return (s + o) >= fireNumber + mortPVFrom(preservationAge);
+      };
+      const findFullFireAge = () => {
+        let sS = superBalance, sO = outsideBalance;
+        for (let age = currentAge; age <= 100; age++) {
+          if (canFullyRetireAt(age, sS, sO)) return age;
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) sO = Math.max(0, sO - grossUp(purchase));
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
+          sS = sS * (1 + realRetSuper) + c.netSuperContrib;
+          sO = sO * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        return null;
+      };
+
+      // ─── Compute milestones ───
+      const coastRetireAge = findCoastAge(targetRetireAge);
+      const baristaAge = findBaristaAge();
+      const fullFireAge = findFullFireAge();
+
+      // Coast downshift age the projection actually uses. Defaults to the earliest
+      // qualifying age (coastRetireAge), but the user can DELAY it via coastStartAge to
+      // keep saving full-time for more years before coasting — which grows net worth.
+      // 0/blank means "auto = earliest". Clamped to [earliest, targetRetireAge].
+      const effectiveCoastStart = coastRetireAge == null ? null
+        : Math.min(targetRetireAge, Math.max(coastRetireAge, coastStartAge || coastRetireAge));
+
+      // ─── Projection builder (year-by-year for chart) ───
+      // mode: 'full' | 'coast' | 'barista'
+      // Adds a downshift phase between downshiftAge and targetRetireAge where you
+      // work the coast/barista job (no voluntary super, no monthly outside saving;
+      // the job's SG flows into super; spending gap drawn from outside).
+      const currentYear = new Date().getFullYear();
+      const buildProjection = (mode) => {
+        let downshiftAge = null, downshiftSGNet = 0, downshiftGapAt = () => 0;
+        if (mode === 'coast' && coastRetireAge != null) {
+          downshiftAge = effectiveCoastStart;
+          downshiftSGNet = coastJobNetSuper;
+          downshiftGapAt = coastGapAt;
+        } else if (mode === 'barista' && baristaAge != null) {
+          downshiftAge = baristaAge;
+          downshiftSGNet = baristaSGContrib.netSuperContrib;
+          downshiftGapAt = baristaGapAt;
+        }
+
+        const proj = [];
+        let pSuper = superBalance, pOutside = outsideBalance;
+        // First age where spending (or a purchase) couldn't be funded. Pre-preservation
+        // super is locked, so an empty outside-super balance means the plan has failed.
+        let depletedAge = null;
+        const markShort = (age) => { if (depletedAge == null) depletedAge = age; };
+        // Spend `net` from outside-super (CGT grossed up). Flags any shortfall.
+        const drawOutside = (age, net) => {
+          const gross = grossUp(net);
+          if (gross > pOutside + 1) markShort(age);
+          pOutside = Math.max(0, pOutside - gross);
+        };
+        // Post-preservation: draw from super first (tax-free), the rest from outside.
+        const drawSuperThenOutside = (age, net) => {
+          const fromSuper = Math.min(pSuper, net);
+          pSuper -= fromSuper;
+          if (net - fromSuper > 0) drawOutside(age, net - fromSuper);
+        };
+        const maxAge = Math.min(100, currentAge + 60);
+        for (let age = currentAge; age <= maxAge; age++) {
+          proj.push({
+            age,
+            year: currentYear + (age - currentAge),
+            super: Math.round(pSuper),
+            outside: Math.round(pOutside),
+            total: Math.round(pSuper + pOutside),
+          });
+          if (age < maxAge) {
+            // Purchase at this age — outside (pre-pres, grossed-up for CGT) or super (post-pres, tax-free)
+            const purchase = purchaseRealAtAge(age);
+            if (purchase > 0) {
+              if (age >= preservationAge) drawSuperThenOutside(age, purchase);
+              else drawOutside(age, purchase);
+            }
+            if (downshiftAge != null && age >= downshiftAge && age < targetRetireAge) {
+              // Coast/Barista phase: SG flows in, outside funds spending gap (grossed up)
+              pSuper = pSuper * (1 + realRetSuper) + downshiftSGNet;
+              pOutside = pOutside * (1 + realRetOut);
+              drawOutside(age, downshiftGapAt(age));
+            } else if (age < targetRetireAge) {
+              // Full-time saving phase
+              const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
+              pSuper = pSuper * (1 + realRetSuper) + c.netSuperContrib;
+              pOutside = pOutside * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+            } else if (age < preservationAge) {
+              // Retired, pre-preservation: drawdown from outside (grossed up for CGT)
+              pSuper = pSuper * (1 + realRetSuper);
+              pOutside = pOutside * (1 + realRetOut);
+              drawOutside(age, annualSpending + mortAt(age));
+            } else {
+              // Post-preservation: drawdown from super (pension phase, tax-free);
+              // once super is exhausted the remainder comes from outside-super.
+              pSuper = pSuper * (1 + realRetSuperPension);
+              pOutside = pOutside * (1 + realRetOut);
+              drawSuperThenOutside(age, annualSpending + mortAt(age));
+            }
+          }
+        }
+        return { data: proj, depletedAge };
+      };
+
+      const fullProj = buildProjection('full');
+      const coastProj = buildProjection('coast');
+      const baristaProj = buildProjection('barista');
+      const projection = fullProj.data;
+      const projectionCoast = coastProj.data;
+      const projectionBarista = baristaProj.data;
+
+      // Net worth along the coast path at the target retirement age — i.e. what you'd
+      // have if you save full-time until effectiveCoastStart, then coast to retirement.
+      // Delaying the coast start pushes this number up (you accumulate more first).
+      let coastProjectedAtRetire = 0;
+      if (coastRetireAge != null) {
+        const e = projectionCoast.find(d => d.age === targetRetireAge);
+        if (e) coastProjectedAtRetire = e.total;
+      }
+
+      // Projected portfolio at full FIRE age (from full projection)
+      let fullFireProjected = 0;
+      if (fullFireAge != null) {
+        const e = projection.find(d => d.age === fullFireAge);
+        if (e) fullFireProjected = e.total;
+      }
+
+      // ─── Build milestone display objects ───
+      const buildMilestone = ({ pillLabel, subtitle, atAge, requiredPortfolio, explanation, projectedPortfolio }) => ({
+        pillLabel, subtitle, atAge,
+        yearsAway: atAge != null ? atAge - currentAge : null,
+        label: atAge == null ? "Not reached" : (atAge <= currentAge ? "Already there" : `Age ${atAge} · ${currentYear + (atAge - currentAge)}`),
+        requiredPortfolio: requiredPortfolio || 0,
+        projectedPortfolio: projectedPortfolio || 0,
+        explanation,
+      });
+
+      // For each Coast milestone, compute "required portfolio at coast point"
+      // = the minimum total needed at the coast age to satisfy canCoastAt
+      const requiredPortfolioForCoast = (retireAge, age) => {
+        // Solve: a portfolio with current super:outside ratio that just satisfies canCoastAt
+        // For display only — use total assets at the coast age
+        const sumNow = superBalance + outsideBalance;
+        if (sumNow === 0) return null;
+        // Use the projection to find total at coast age
+        const e = projection.find(d => d.age === age);
+        return e ? e.total : null;
+      };
+
+      const coastRetireRequired = coastRetireAge != null ? requiredPortfolioForCoast(targetRetireAge, coastRetireAge) : null;
+      // For the new Barista FIRE model, "required portfolio" isn't a single SWR-derived
+      // threshold — it's the portfolio you'd actually have at the downshift age along
+      // the optimal path. Compute that for display, plus the portfolio at targetRetireAge.
+      let baristaPortfolioAtDownshift = 0;
+      let baristaPortfolioAtRetire = 0;
+      if (baristaAge != null) {
+        let s = superBalance, o = outsideBalance;
+        for (let age = currentAge; age < baristaAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = Math.max(0, o - grossUp(purchase));
+          const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
+          s = s * (1 + realRetSuper) + c.netSuperContrib;
+          o = o * (1 + realRetOut) + annualOutsideSaving + c.excessToOutside;
+        }
+        baristaPortfolioAtDownshift = s + o;
+        for (let age = baristaAge; age < targetRetireAge; age++) {
+          const purchase = purchaseRealAtAge(age);
+          if (purchase > 0) o = Math.max(0, o - grossUp(purchase));
+          s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
+          o = Math.max(0, o * (1 + realRetOut) - grossUp(baristaGapAt(age)));
+        }
+        baristaPortfolioAtRetire = s + o;
+      }
+      const baristaGapNote = baristaSpendingGap > 0
+        ? `Barista net (${fmt(baristaNetIncome)}) leaves a ${fmt(baristaSpendingGap)}/yr gap drawn from outside-super.`
+        : `Barista net (${fmt(baristaNetIncome)}) covers full spending — outside-super keeps growing.`;
+
+      const coastJobNote = coastJobGap > 0
+        ? `Coast job ${fmt(coastJobIncome)} (gross) leaves a ${fmt(coastJobGap)}/yr shortfall drawn from outside-super. SG ${fmt(coastJobNetSuper)}/yr still flows to super.`
+        : `Coast job ${fmt(coastJobIncome)} (gross) covers your spending. SG ${fmt(coastJobNetSuper)}/yr still flows to super.`;
+
+      const coastRetire = buildMilestone({
+        pillLabel: `Coast FIRE · ${targetRetireAge}`,
+        subtitle: `Stop investing, retire at ${targetRetireAge}`,
+        atAge: coastRetireAge,
+        requiredPortfolio: coastRetireRequired,
+        explanation: coastRetireAge == null
+          ? `Current portfolio + saving doesn't reach the coast threshold by age 100. Try increasing return assumptions, reducing spending, or using a higher coast job income.`
+          : coastRetireAge <= currentAge
+            ? `Already coasting. ${coastJobNote}`
+            : `By age ${coastRetireAge}, your portfolio reaches ${fmt(coastRetireRequired || 0)}. ${coastJobNote}`,
+      });
+
+      const barista = buildMilestone({
+        pillLabel: "Barista FIRE",
+        subtitle: `Downshift to part-time (~${fmt(baristaIncome)}/yr gross) until age ${targetRetireAge}, then fully retire`,
+        atAge: baristaAge,
+        requiredPortfolio: baristaPortfolioAtDownshift,
+        projectedPortfolio: baristaPortfolioAtRetire,
+        explanation: baristaAge == null
+          ? `Even downshifting today to ${fmt(baristaIncome)}/yr won't let your portfolio reach Full FIRE by age ${targetRetireAge}. Try raising barista income, increasing current saving, or pushing out the target retirement age.`
+          : baristaAge <= currentAge
+            ? `You can downshift to part-time today. ${baristaGapNote} Portfolio still grows to ${fmt(baristaPortfolioAtRetire)} by age ${targetRetireAge} — enough to fully retire then.`
+            : `By age ${baristaAge} portfolio reaches ${fmt(baristaPortfolioAtDownshift)} — enough to downshift. ${baristaGapNote} Portfolio still grows to ${fmt(baristaPortfolioAtRetire)} by age ${targetRetireAge}.`,
+      });
+
+      const fullFire = buildMilestone({
+        pillLabel: "Full FIRE",
+        subtitle: "Never work again",
+        atAge: fullFireAge,
+        requiredPortfolio: fireNumber,
+        projectedPortfolio: fullFireProjected,
+        explanation: fullFireAge == null
+          ? `Full FIRE not reached by 100. Increase saving, reduce spending, or revise return assumptions.`
+          : fullFireAge <= currentAge
+            ? `${fmt(superBalance + outsideBalance)} already exceeds inflation-adjusted FIRE number of ${fmt(fireNumber)}.`
+            : `Portfolio reaches ${fmt(fullFireProjected)} by age ${fullFireAge}, exceeding inflation-adjusted FIRE number of ${fmt(fireNumber)}.`,
+      });
+
+      return {
+        fireNumber,
+        realRetOut: realRetOut * 100,
+        realRetSuper: realRetSuper * 100,
+        coastRetire, barista, fullFire,
+        coastDownshiftAge: effectiveCoastStart,
+        coastProjectedAtRetire,
+        projection,
+        projectionCoast,
+        projectionBarista,
+        depletedAge: { full: fullProj.depletedAge, coast: coastProj.depletedAge, barista: baristaProj.depletedAge },
+        projectionEndAge: projection[projection.length - 1].age,
+        mortOn, mortgageEndAge: mortOn ? mortgagePayoffAge : null,
+      };
+    }
+
+    window.FirePage = FIREMilestones;
+    window.FireEngine = { computeAll, loadFireInputs, loadMsInputs };
+})();

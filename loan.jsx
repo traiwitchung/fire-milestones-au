@@ -1,56 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-  <meta name="apple-mobile-web-app-title" content="FIRE" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#0b1120" />
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="apple-touch-icon" href="./icon-180.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
-  <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
-  <title>Home loan — FIRE Milestones Australia</title>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
-  <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-  <!-- Pinned to Babel 7 — see the note in index.html. -->
-  <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet" />
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: #0b1120;
-      overflow-y: scroll;
-      overflow-x: hidden;
-    }
-    html { -webkit-text-size-adjust: 100%; }
-    /* Prevent iOS Safari from auto-zooming when focusing an input */
-    @media (max-width: 640px) {
-      input, select, textarea { font-size: 16px !important; }
-    }
-    input::placeholder { color: #4a5568; }
-    input[type="date"] { color-scheme: dark; }
-    select option { background: #141c2c; color: #e8eff8; }
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
-    ::-webkit-scrollbar-thumb { background: rgba(212,160,82,0.3); border-radius: 4px; }
-    ::selection { background: rgba(212,160,82,0.3); }
-    .mn-stat-card { transition: border-color 0.2s, background 0.2s; }
-    .mn-stat-card:hover { border-color: rgba(255,255,255,0.12) !important; background: rgba(255,255,255,0.05) !important; }
-    .mn-btn { transition: all 0.15s; }
-    .mn-btn:hover { background: rgba(212, 160, 82, 0.2) !important; border-color: rgba(212, 160, 82, 0.5) !important; }
-    .mn-x:hover { color: #cf6e6e !important; border-color: rgba(207,110,110,0.4) !important; }
-    .mn-in:focus { border-color: rgba(212,160,82,0.45) !important; background: rgba(212,160,82,0.06) !important; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel">
-    const { useState, useMemo, useEffect } = React;
+// Home loan — one tab of the Family Networth app. Wrapped in an IIFE so its helpers
+// don't collide with the other tabs; it shares only what it puts on window.
+(() => {
+    const { useState, useMemo, useEffect, useRef } = React;
     const {
       ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
       ResponsiveContainer, Legend, ReferenceLine,
@@ -243,24 +194,6 @@
       </div>
     );
 
-    const TopNav = ({ active }) => (
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
-        {[
-          { id: "money", href: "./money.html", label: "Money" },
-          { id: "loan", href: "./loan.html", label: "Home loan" },
-          { id: "fire", href: "./", label: "FIRE Milestones" },
-        ].map(l => (
-          <a key={l.id} href={l.href} style={{
-            padding: "5px 14px", borderRadius: 999, fontSize: 12, fontWeight: 600, textDecoration: "none",
-            fontFamily: "'DM Sans', sans-serif",
-            background: active === l.id ? T.accentBg : "transparent",
-            border: `1px solid ${active === l.id ? T.accentDim : "rgba(255,255,255,0.08)"}`,
-            color: active === l.id ? T.accent : T.textDim,
-          }}>{l.label}</a>
-        ))}
-      </div>
-    );
-
     const fmtCents = (v) => v == null || isNaN(v) ? "$0.00"
       : `$${v.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const yrs = (n) => `${n} yr${n === 1 ? "" : "s"}`;
@@ -450,6 +383,28 @@
       </div>
     );
 
+    // Everything the page (and the Overview) needs from one loan: the simulation, the no-offset
+    // comparison, and what it means for FIRE. Monthly cost while the loan runs = scheduled
+    // repayment + recurring extra repayments; payoff age rounds up to a whole year.
+    function loanSummary(loan, fire) {
+      const startISO = loan.startISO || todayISO();
+      const termMonths = Math.max(1, num(loan.years) * 12 + num(loan.months));
+      const p = {
+        principal: num(loan.principal), ratePct: num(loan.ratePct), termMonths, freq: loan.freq,
+        repaymentOverride: num(loan.repaymentOverride), startISO, endWhenOffset: loan.endWhenOffset,
+      };
+      const main = simulateLoan({ ...p, offsetStart: num(loan.offsetStart), extras: loan.extras });
+      const comp = simulateLoan(p); // same repayments, no offset and no extras
+      const extraMonthly = sum(loan.extras.filter(x => x.on !== false && x.type === "extra").map(x => num(x.amount) * (PER_MONTH[x.freq] || 0)));
+      const repayMonthly = main.repay * (LOAN_PERIODS[loan.freq] || 12) / 12 + extraMonthly;
+      const yearsLeft = main.payoffISO ? Math.max(0, (parseISO(main.payoffISO) - parseISO(todayISO())) / (365.25 * 86400000)) : null;
+      const payoffAge = yearsLeft != null ? num(fire.currentAge) + Math.ceil(yearsLeft - 1e-6) : null;
+      const fireSynced = Math.round(num(fire.mortgageRepayment)) === Math.round(repayMonthly) && num(fire.mortgagePayoffAge) === payoffAge;
+      const fireHasMortgage = num(fire.mortgageRepayment) > 0 && num(fire.mortgagePayoffAge) > num(fire.currentAge);
+      return { startISO, termMonths, main, comp, extraMonthly, repayMonthly, payoffAge, fireSynced, fireHasMortgage };
+    }
+    const hasLoan = () => { try { return localStorage.getItem(LOAN_KEY) != null; } catch { return false; } };
+
     // ══════════════════════════════════════════════════════════
     // ─── MAIN COMPONENT ───
     // ══════════════════════════════════════════════════════════
@@ -460,7 +415,13 @@
       const [fire, setFire] = useState(loadFire);
       const [moneyNote, setMoneyNote] = useState(null);
       const [fireNote, setFireNote] = useState(null);
-      useEffect(() => { try { localStorage.setItem(LOAN_KEY, JSON.stringify(loan)); } catch {} }, [loan]);
+      // Save only after a real edit — just opening the tab mustn't store the example loan
+      // (the Overview treats a saved loan as "you have a mortgage").
+      const loaded = useRef(true);
+      useEffect(() => {
+        if (loaded.current) { loaded.current = false; return; }
+        try { localStorage.setItem(LOAN_KEY, JSON.stringify(loan)); } catch {}
+      }, [loan]);
       useEffect(() => {
         const refresh = () => setFire(loadFire());
         const onStorage = (e) => { if (e.key === FIRE_STORAGE_KEY) refresh(); };
@@ -471,19 +432,8 @@
 
       const set = (patch) => setLoan(l => ({ ...l, ...patch }));
       const patchExtra = (id, patch) => setLoan(l => ({ ...l, extras: l.extras.map(x => x.id === id ? { ...x, ...patch } : x) }));
-      const startISO = loan.startISO || todayISO();
-      const termMonths = Math.max(1, num(loan.years) * 12 + num(loan.months));
-
-      const sim = useMemo(() => {
-        const p = {
-          principal: num(loan.principal), ratePct: num(loan.ratePct), termMonths, freq: loan.freq,
-          repaymentOverride: num(loan.repaymentOverride), startISO, endWhenOffset: loan.endWhenOffset,
-        };
-        const main = simulateLoan({ ...p, offsetStart: num(loan.offsetStart), extras: loan.extras });
-        const comp = simulateLoan(p); // same repayments, no offset and no extras
-        return { main, comp };
-      }, [loan, startISO, termMonths]);
-      const { main, comp } = sim;
+      const S = useMemo(() => loanSummary(loan, fire), [loan, fire]);
+      const { startISO, termMonths, main, comp, extraMonthly, repayMonthly, payoffAge, fireSynced, fireHasMortgage } = S;
 
       const start = parseISO(startISO);
       const monthsTo = (iso) => iso ? monthDiff(start, parseISO(iso)) + (parseISO(iso).getDate() - start.getDate()) / 30.44 : null;
@@ -507,15 +457,7 @@
       const maxT = chartData.length ? chartData[chartData.length - 1].t : 1;
       const ticks = []; for (let y = 0; y <= Math.ceil(maxT); y += maxT > 20 ? 5 : maxT > 8 ? 2 : 1) ticks.push(y);
 
-      // ─── FIRE link ───
-      // Monthly cost while the loan runs = scheduled repayment + any recurring extra repayments.
-      const extraMonthly = sum(loan.extras.filter(x => x.on !== false && x.type === "extra").map(x => num(x.amount) * (PER_MONTH[x.freq] || 0)));
-      const repayMonthly = main.repay * (LOAN_PERIODS[loan.freq] || 12) / 12 + extraMonthly;
       const today = parseISO(todayISO());
-      const yearsLeft = main.payoffISO ? Math.max(0, (parseISO(main.payoffISO) - today) / (365.25 * 86400000)) : null;
-      const payoffAge = yearsLeft != null ? num(fire.currentAge) + Math.ceil(yearsLeft - 1e-6) : null;
-      const fireSynced = Math.round(num(fire.mortgageRepayment)) === Math.round(repayMonthly) && num(fire.mortgagePayoffAge) === payoffAge;
-      const fireHasMortgage = num(fire.mortgageRepayment) > 0 && num(fire.mortgagePayoffAge) > num(fire.currentAge);
       const writeFire = (patch, note) => {
         const existing = readJSON(FIRE_STORAGE_KEY) || {};
         try { localStorage.setItem(FIRE_STORAGE_KEY, JSON.stringify({ ...existing, ...patch })); } catch {}
@@ -536,28 +478,8 @@
       const cardGap = { marginBottom: 16 };
 
       return (
-        <div style={{
-          minHeight: "100vh", background: "linear-gradient(165deg, #0b1120 0%, #101624 40%, #141e30 100%)",
-          color: "#c8d5e2", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden",
-        }}>
-          <div style={{
-            position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0,
-            background: "radial-gradient(ellipse at 20% 0%, rgba(212,160,82,0.04) 0%, transparent 60%), radial-gradient(ellipse at 80% 100%, rgba(76,140,120,0.03) 0%, transparent 50%)",
-          }} />
-          <div style={{ position: "relative", zIndex: 1, maxWidth: 1400, margin: "0 auto", padding: `${isMobile ? 20 : 28}px ${pad}px 96px` }}>
-            <TopNav active="loan" />
-            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-              <h1 style={{
-                fontSize: isMobile ? 22 : 28, fontWeight: 800, margin: 0, letterSpacing: "-0.02em", fontFamily: "'Playfair Display', serif",
-                background: `linear-gradient(135deg, ${T.accent}, ${T.accentLight})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-              }}>Home loan</h1>
-              <span style={{ fontSize: 13, color: T.textDim, fontWeight: 500, letterSpacing: "0.04em" }}>Day-by-day simulation · offset · extra repayments</span>
-            </div>
-            <p style={{ fontSize: 13, color: "#4a5b6d", margin: "6px 0 18px", maxWidth: 760, lineHeight: 1.5 }}>
-              Interest is calculated daily on the loan minus your offset and charged monthly, like a real Australian loan.
-              Pull your balances from Money, then send the payoff age to FIRE Milestones so retirement plans include the repayments.
-            </p>
-
+        <div style={{ color: "#c8d5e2", fontFamily: "'DM Sans', sans-serif" }}>
+          <div style={{ maxWidth: 1400, margin: "0 auto", padding: `${isMobile ? 16 : 20}px ${pad}px 96px` }}>
             <div style={{ display: "flex", gap: 20, flexDirection: isMobile ? "column" : "row", alignItems: "flex-start" }}>
               {/* ── Inputs ── */}
               <div style={{ width: isMobile ? "100%" : 320, flexShrink: 0 }}>
@@ -733,7 +655,7 @@
                         {fireHasMortgage && (
                           <Button onClick={() => writeFire({ mortgageRepayment: 0, mortgagePayoffAge: 0 }, "Mortgage removed from FIRE.")}>Remove from FIRE</Button>
                         )}
-                        <a href="./" style={{ fontSize: 12, color: T.accent, textDecoration: "none", fontWeight: 600 }}>Open FIRE Milestones →</a>
+                        <a href="#fire" style={{ fontSize: 12, color: T.accent, textDecoration: "none", fontWeight: 600 }}>Open FIRE →</a>
                       </div>
                       <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
                         FIRE currently: {fireHasMortgage ? `${fmtFull(fire.mortgageRepayment)}/mo until age ${fire.mortgagePayoffAge}` : "no mortgage modelled"} · your age {fire.currentAge}
@@ -751,79 +673,6 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<HomeLoan />);
-  </script>
-  <!-- ── PWA: floating backup/restore + service-worker registration (same as index.html) ── -->
-  <style>
-    .pwa-fab-wrap {
-      position: fixed; z-index: 9999; font-family: 'DM Sans', system-ui, sans-serif; display: flex; gap: 6px;
-      bottom: max(16px, env(safe-area-inset-bottom, 0px) + 12px);
-      right:  max(16px, env(safe-area-inset-right, 0px) + 12px);
-    }
-    .pwa-fab {
-      padding: 8px 12px; border-radius: 999px;
-      background: rgba(11, 17, 32, 0.88);
-      color: #d4a052;
-      border: 1px solid rgba(212, 160, 82, 0.45);
-      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
-      cursor: pointer;
-      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-      transition: .15s; box-shadow: 0 4px 14px rgba(0,0,0,.4);
-    }
-    .pwa-fab:hover { background: rgba(212,160,82,0.18); color: #fbbf24; }
-    .pwa-fab:active { transform: scale(0.95); }
-  </style>
-  <div class="pwa-fab-wrap">
-    <button class="pwa-fab" onclick="pwaExport()" title="Download all FIRE data as JSON">⤓ Backup</button>
-    <button class="pwa-fab" onclick="document.getElementById('pwa-restore-file').click()" title="Restore from JSON">⤒ Restore</button>
-    <input id="pwa-restore-file" type="file" accept="application/json" style="display:none" onchange="pwaImport(event)" />
-  </div>
-  <script>
-  (function(){
-    window.pwaExport = function(){
-      var dump = { _meta: { app: 'fire-au', exportedAt: new Date().toISOString() } };
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i), v = localStorage.getItem(k);
-        try { v = JSON.parse(v); } catch (_) {}
-        dump[k] = v;
-      }
-      var blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'fire-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-      a.click();
-      URL.revokeObjectURL(url);
-    };
-    window.pwaImport = function(e){
-      var f = e.target.files[0]; if (!f) return;
-      e.target.value = ''; // let the same file be picked again
-      if (!confirm('Restore will overwrite your current FIRE data with the backup. Continue?')) return;
-      var r = new FileReader();
-      r.onload = function(){
-        try {
-          var parsed = JSON.parse(r.result);
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('shape');
-          Object.keys(parsed).forEach(function(k){
-            if (k.charAt(0) === '_') return;
-            var v = parsed[k];
-            localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
-          });
-          location.reload();
-        } catch (err) { alert('That file does not look like a valid backup.'); }
-      };
-      r.readAsText(f);
-    };
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', function(){
-        navigator.serviceWorker.register('./sw.js').then(function(reg){
-          if (reg && reg.update) { try { reg.update(); } catch(_){} }
-        }).catch(function(err){
-          console.warn('SW registration failed:', err);
-        });
-      });
-    }
-  })();
-  </script>
-</body>
-</html>
+    window.LoanPage = HomeLoan;
+    window.LoanEngine = { simulateLoan, loadLoan, loadFire, loanSummary, hasLoan, LOAN_KEY };
+})();
