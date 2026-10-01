@@ -228,6 +228,23 @@
       );
     };
 
+    const TopNav = ({ active }) => (
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {[
+          { id: "money", href: "./money.html", label: "Money" },
+          { id: "fire", href: "./", label: "FIRE Milestones" },
+        ].map(l => (
+          <a key={l.id} href={l.href} style={{
+            padding: "5px 14px", borderRadius: 999, fontSize: 12, fontWeight: 600, textDecoration: "none",
+            fontFamily: "'DM Sans', sans-serif",
+            background: active === l.id ? T.accentBg : "transparent",
+            border: `1px solid ${active === l.id ? T.accentDim : "rgba(255,255,255,0.08)"}`,
+            color: active === l.id ? T.accent : T.textDim,
+          }}>{l.label}</a>
+        ))}
+      </div>
+    );
+
     const CustomTooltip = ({ active, payload, label }) => {
       if (!active || !payload || !payload.length) return null;
       return (
@@ -485,6 +502,20 @@
         }
         localStorage.setItem(MS_STORAGE_KEY, JSON.stringify(msInputs));
       });
+      // The Money page can push new inputs while this tab is open — reload so this
+      // tab doesn't overwrite them with its stale state on the next render.
+      useEffect(() => {
+        const onStorage = (e) => {
+          if (e.key !== FIRE_STORAGE_KEY || !e.newValue) return;
+          try {
+            const next = JSON.parse(e.newValue);
+            const cur = fireRef.current;
+            if (Object.keys(cur).some(k => next[k] !== undefined && next[k] !== cur[k])) location.reload();
+          } catch {}
+        };
+        window.addEventListener("storage", onStorage);
+        return () => window.removeEventListener("storage", onStorage);
+      }, []);
 
       // ══════════════════════════════════════
       // CALCULATION ENGINE
@@ -561,6 +592,7 @@
 
           {/* Header */}
           <div style={{ position: "relative", zIndex: 1, padding: isMobile ? "20px 16px 0" : "28px 32px 0", maxWidth: 1400, margin: "0 auto" }}>
+            <TopNav active="fire" />
             <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
               <h1 style={{
                 fontSize: isMobile ? 22 : 28, fontWeight: 800, margin: 0, letterSpacing: "-0.02em",
@@ -1709,6 +1741,7 @@
     };
     window.pwaImport = function(e){
       var f = e.target.files[0]; if (!f) return;
+      e.target.value = ''; // let the same file be picked again
       if (!confirm('Restore will overwrite your current FIRE data with the backup. Continue?')) return;
       var r = new FileReader();
       r.onload = function(){

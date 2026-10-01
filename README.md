@@ -1,6 +1,6 @@
 # FIRE Milestones · Australia
 
-Offline-first PWA for tracking Financial Independence / Retire Early milestones (Coast FIRE, Barista FIRE, Full FIRE) tuned for Australian super rules. Pure static HTML/CSS/JS — React via CDN, no build step, no backend. Data stays on your device.
+Offline-first PWA for tracking Financial Independence / Retire Early milestones (Coast FIRE, Barista FIRE, Full FIRE) tuned for Australian super rules, plus a **Money** page for budgeting and net-worth tracking that feeds the FIRE plan. Pure static HTML/CSS/JS — React via CDN, no build step, no backend. Data stays on your device.
 
 ## Deploy to GitHub Pages
 
@@ -22,7 +22,7 @@ First load needs the internet so the service worker can cache all assets; after 
 
 ## Backup your data
 
-All FIRE inputs live only on this device in `localStorage`. If you lose the phone or clear Safari data, it's gone.
+All FIRE inputs and Money data (budget, accounts, check-ins) live only on this device in `localStorage`. If you lose the phone or clear Safari data, it's gone.
 
 - Tap the floating **⤓ Backup** button (bottom-right) to download a JSON of everything.
 - Tap **⤒ Restore** to load a backup file.
@@ -40,6 +40,7 @@ Without this bump, installed devices keep serving the old cached build.
 ## Files
 
 - `index.html` — the Milestones app (entry point)
+- `money.html` — Money page: monthly budget (any frequency → /month), surplus allocation, net-worth check-ins + history chart, emergency-fund ladder, and a "Send to FIRE Milestones" panel that writes super/outside balances, monthly saving and retirement spending into the Milestones inputs
 - `manifest.json` — PWA manifest
 - `sw.js` — service worker with versioned cache
 - `icon-180/192/512.png` — flame app icons
