@@ -246,10 +246,11 @@
       );
     };
 
-    // ─── Australian Tax (2025-26 resident rates, incl. LITO + Medicare levy shade-in) ───
+    // ─── Australian Tax (2026-27 resident rates, incl. LITO + Medicare levy shade-in) ───
+    // 2026-27: the 16% bracket drops to 15% (legislated; falls again to 14% from 2027-28).
     const incomeTaxBrackets = [
       { min: 0, max: 18200, rate: 0 },
-      { min: 18200, max: 45000, rate: 0.16 },
+      { min: 18200, max: 45000, rate: 0.15 },
       { min: 45000, max: 135000, rate: 0.30 },
       { min: 135000, max: 190000, rate: 0.37 },
       { min: 190000, max: Infinity, rate: 0.45 },
@@ -281,7 +282,8 @@
       const voluntaryRedirected = grossVolRequested - grossVolActual;
       const sgExcess = Math.max(0, grossSG - concessionalCap);
       const totalConcessional = Math.min(grossSG, concessionalCap) + grossVolActual;
-      const incPlusConcess = salary + totalConcessional;
+      // Div 293 income = taxable income (salary less sacrifice, plus any excess SG) + concessional contribs
+      const incPlusConcess = salary - grossVolActual + sgExcess + totalConcessional;
       let div293Tax = 0;
       if (incPlusConcess > 250000) {
         const div293Amount = Math.min(totalConcessional, incPlusConcess - 250000);
@@ -418,8 +420,8 @@
 
     function FIREMilestones() {
       const isMobile = useIsMobile();
-      const fireSaved = loadFireInputs();
-      const msSaved = loadMsInputs();
+      const [fireSaved] = useState(loadFireInputs);
+      const [msSaved] = useState(loadMsInputs);
 
       // Shared inputs (synced with FIRE Suite)
       const [currentAge, setCurrentAge] = useState(fireSaved.currentAge);
@@ -531,6 +533,11 @@
       const downshiftAge =
         projectionMode === "coast" ? results.coastDownshiftAge :
         projectionMode === "barista" ? results.barista.atAge : null;
+      // Age the active trajectory can no longer fund spending (null = lasts the whole projection)
+      const depletedAge =
+        activeProjection === results.projectionCoast ? results.depletedAge.coast :
+        activeProjection === results.projectionBarista ? results.depletedAge.barista :
+        results.depletedAge.full;
 
       // In coast mode, when the coast start is delayed past the earliest qualifying age,
       // mark BOTH on the chart with vertical lines: "can coast" (earliest) and the actual start.
@@ -579,7 +586,7 @@
           {/* Main layout */}
           <div style={{
             position: "relative", zIndex: 1,
-            display: "flex", gap: 24, padding: isMobile ? "16px 16px 40px" : "20px 32px 40px",
+            display: "flex", gap: 24, padding: isMobile ? "16px 16px 80px" : "20px 32px 80px",
             maxWidth: 1400, margin: "0 auto",
             flexDirection: isMobile ? "column" : "row", flexWrap: "wrap",
           }}>
@@ -661,14 +668,14 @@
                         width: "100%", minWidth: 0, fontFamily: "'DM Sans', sans-serif",
                       }} />
                     <input type="number" placeholder="Age" value={p.age}
-                      onChange={(e) => updatePurchase(p.id, "age", parseInt(e.target.value) || 0)}
+                      onChange={(e) => updatePurchase(p.id, "age", e.target.value === "" ? "" : parseInt(e.target.value) || 0)}
                       style={{
                         background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
                         borderRadius: 4, padding: "4px 6px", fontSize: 12, color: T.text, outline: "none",
                         width: "100%", minWidth: 0, textAlign: "right", ...mono,
                       }} />
                     <input type="number" placeholder="$" value={p.amount}
-                      onChange={(e) => updatePurchase(p.id, "amount", parseFloat(e.target.value) || 0)}
+                      onChange={(e) => updatePurchase(p.id, "amount", e.target.value === "" ? "" : parseFloat(e.target.value) || 0)}
                       style={{
                         background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
                         borderRadius: 4, padding: "4px 7px", fontSize: 12, color: T.text, outline: "none",
@@ -890,7 +897,7 @@
                       {fmt(results.fireNumber)}
                     </div>
                     <div style={{ fontSize: 11, color: T.textDim, marginTop: 2 }}>
-                      {fmt(annualSpending)}/yr × {Math.round(100 / swr)}
+                      {fmt(annualSpending)}/yr × {+(100 / swr).toFixed(1)}
                     </div>
                   </div>
                   <div>
@@ -990,6 +997,21 @@
                     <>Barista FIRE not reachable with current inputs — showing Full FIRE trajectory.</>
                   )}
                 </div>
+                {/* Plan health: does the money last? */}
+                <div style={{ paddingLeft: 20, paddingRight: 16, marginBottom: 8, fontSize: 12, lineHeight: 1.5 }}>
+                  {depletedAge != null ? (
+                    <span style={{ color: T.red }}>
+                      ⚠ <strong>Money runs out at age {depletedAge}</strong>
+                      {depletedAge < preservationAge
+                        ? ` — outside-super can't cover spending/purchases and super stays locked until ${preservationAge}.`
+                        : ` — super and outside-super are both exhausted.`}
+                      {activeProjection === results.projection && results.fullFire.atAge != null && results.fullFire.atAge > targetRetireAge &&
+                        ` Retiring at ${targetRetireAge} is before your Full FIRE age (${results.fullFire.atAge}).`}
+                    </span>
+                  ) : (
+                    <span style={{ color: T.green }}>✓ Portfolio lasts past age {results.projectionEndAge} on this trajectory.</span>
+                  )}
+                </div>
                 <ResponsiveContainer width="100%" height={isMobile ? 320 : 460}>
                   <ComposedChart data={activeProjection.filter(d => d.age <= chartEndAge)} margin={{ top: 20, right: 72, left: 20, bottom: 5 }}>
                     <defs>
@@ -1043,6 +1065,10 @@
                     )}
                     <ReferenceLine x={preservationAge} stroke={T.textMid} strokeDasharray="2 4" strokeOpacity={0.3}
                       label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: showCoastEarliestMarker ? 64 : 48 }} />
+                    {depletedAge != null && depletedAge <= chartEndAge && (
+                      <ReferenceLine x={depletedAge} stroke={T.red} strokeOpacity={0.7}
+                        label={{ value: `Runs out ${depletedAge}`, position: "insideBottomLeft", fill: T.red, fontSize: 10, fontWeight: 600, dy: -18 }} />
+                    )}
                     {/* Big-purchase markers */}
                     {purchases.filter(p => p.amount > 0 && p.age >= currentAge && p.age <= chartEndAge).map(p => (
                       <ReferenceLine key={p.id} x={p.age} stroke={T.red} strokeDasharray="2 3" strokeOpacity={0.45}
@@ -1084,7 +1110,7 @@
                 Starting portfolio {fmt(superBalance + outsideBalance)} ·
                 FIRE number = spending ÷ {swr}% SWR ·
                 Coast FIRE uses portfolio + ongoing SG only (no voluntary contributions) ·
-                Income tax: 2025-26 brackets + LITO + Medicare levy (low-income shade-in) ·
+                Income tax: 2026-27 brackets + LITO + Medicare levy (low-income shade-in) ·
                 Concessional cap $30k{salaryGrowthRate > 0 ? ` · Real salary growth ${salaryGrowthRate}%/yr` : ""} ·
                 All figures in today's dollars · Projections are estimates, not guarantees.
               </div>
@@ -1447,6 +1473,22 @@
 
         const proj = [];
         let pSuper = superBalance, pOutside = outsideBalance;
+        // First age where spending (or a purchase) couldn't be funded. Pre-preservation
+        // super is locked, so an empty outside-super balance means the plan has failed.
+        let depletedAge = null;
+        const markShort = (age) => { if (depletedAge == null) depletedAge = age; };
+        // Spend `net` from outside-super (CGT grossed up). Flags any shortfall.
+        const drawOutside = (age, net) => {
+          const gross = grossUp(net);
+          if (gross > pOutside + 1) markShort(age);
+          pOutside = Math.max(0, pOutside - gross);
+        };
+        // Post-preservation: draw from super first (tax-free), the rest from outside.
+        const drawSuperThenOutside = (age, net) => {
+          const fromSuper = Math.min(pSuper, net);
+          pSuper -= fromSuper;
+          if (net - fromSuper > 0) drawOutside(age, net - fromSuper);
+        };
         const maxAge = Math.min(100, currentAge + 60);
         for (let age = currentAge; age <= maxAge; age++) {
           proj.push({
@@ -1460,13 +1502,14 @@
             // Purchase at this age — outside (pre-pres, grossed-up for CGT) or super (post-pres, tax-free)
             const purchase = purchaseRealAtAge(age);
             if (purchase > 0) {
-              if (age >= preservationAge) pSuper = Math.max(0, pSuper - purchase);
-              else pOutside = Math.max(0, pOutside - grossUp(purchase));
+              if (age >= preservationAge) drawSuperThenOutside(age, purchase);
+              else drawOutside(age, purchase);
             }
             if (downshiftAge != null && age >= downshiftAge && age < targetRetireAge) {
               // Coast/Barista phase: SG flows in, outside funds spending gap (grossed up)
               pSuper = pSuper * (1 + realRetSuper) + downshiftSGNet;
-              pOutside = Math.max(0, pOutside * (1 + realRetOut) - grossUp(downshiftGap));
+              pOutside = pOutside * (1 + realRetOut);
+              drawOutside(age, downshiftGap);
             } else if (age < targetRetireAge) {
               // Full-time saving phase
               const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
@@ -1475,20 +1518,26 @@
             } else if (age < preservationAge) {
               // Retired, pre-preservation: drawdown from outside (grossed up for CGT)
               pSuper = pSuper * (1 + realRetSuper);
-              pOutside = Math.max(0, pOutside * (1 + realRetOut) - grossUp(annualSpending));
-            } else {
-              // Post-preservation: drawdown from super (pension phase, tax-free)
-              pSuper = Math.max(0, pSuper * (1 + realRetSuperPension) - annualSpending);
               pOutside = pOutside * (1 + realRetOut);
+              drawOutside(age, annualSpending);
+            } else {
+              // Post-preservation: drawdown from super (pension phase, tax-free);
+              // once super is exhausted the remainder comes from outside-super.
+              pSuper = pSuper * (1 + realRetSuperPension);
+              pOutside = pOutside * (1 + realRetOut);
+              drawSuperThenOutside(age, annualSpending);
             }
           }
         }
-        return proj;
+        return { data: proj, depletedAge };
       };
 
-      const projection = buildProjection('full');
-      const projectionCoast = buildProjection('coast');
-      const projectionBarista = buildProjection('barista');
+      const fullProj = buildProjection('full');
+      const coastProj = buildProjection('coast');
+      const baristaProj = buildProjection('barista');
+      const projection = fullProj.data;
+      const projectionCoast = coastProj.data;
+      const projectionBarista = baristaProj.data;
 
       // Net worth along the coast path at the target retirement age — i.e. what you'd
       // have if you save full-time until effectiveCoastStart, then coast to retirement.
@@ -1608,6 +1657,8 @@
         projection,
         projectionCoast,
         projectionBarista,
+        depletedAge: { full: fullProj.depletedAge, coast: coastProj.depletedAge, barista: baristaProj.depletedAge },
+        projectionEndAge: projection[projection.length - 1].age,
       };
     }
 
