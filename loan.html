@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="FIRE" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0b1120" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
+  <title>Home loan — FIRE Milestones Australia</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+  <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <!-- Pinned to Babel 7 — see the note in index.html. -->
+  <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0b1120;
+      overflow-y: scroll;
+      overflow-x: hidden;
+    }
+    html { -webkit-text-size-adjust: 100%; }
+    /* Prevent iOS Safari from auto-zooming when focusing an input */
+    @media (max-width: 640px) {
+      input, select, textarea { font-size: 16px !important; }
+    }
+    input::placeholder { color: #4a5568; }
+    input[type="date"] { color-scheme: dark; }
+    select option { background: #141c2c; color: #e8eff8; }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+    ::-webkit-scrollbar-thumb { background: rgba(212,160,82,0.3); border-radius: 4px; }
+    ::selection { background: rgba(212,160,82,0.3); }
+    .mn-stat-card { transition: border-color 0.2s, background 0.2s; }
+    .mn-stat-card:hover { border-color: rgba(255,255,255,0.12) !important; background: rgba(255,255,255,0.05) !important; }
+    .mn-btn { transition: all 0.15s; }
+    .mn-btn:hover { background: rgba(212, 160, 82, 0.2) !important; border-color: rgba(212, 160, 82, 0.5) !important; }
+    .mn-x:hover { color: #cf6e6e !important; border-color: rgba(207,110,110,0.4) !important; }
+    .mn-in:focus { border-color: rgba(212,160,82,0.45) !important; background: rgba(212,160,82,0.06) !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useEffect } = React;
+    const {
+      ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+      ResponsiveContainer, Legend, ReferenceLine,
+    } = Recharts;
+
+    // ══════════════════════════════════════════════════════════
+    // ─── SHARED HELPERS (copied from Money) ───
+    // ══════════════════════════════════════════════════════════
+
+    const fmt = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      const sign = v < 0 ? "-" : "";
+      const a = Math.abs(v);
+      if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(2)}M`;
+      if (a >= 1e4) return `${sign}$${(a / 1e3).toFixed(0)}k`;
+      if (a >= 1e3) return `${sign}$${(a / 1e3).toFixed(1)}k`;
+      return `${sign}$${Math.round(a).toLocaleString()}`;
+    };
+    const fmtFull = (v) => {
+      if (v == null || isNaN(v)) return "$0";
+      return `${v < 0 ? "-" : ""}$${Math.round(Math.abs(v)).toLocaleString()}`;
+    };
+    const fmtSigned = (v) => (v >= 0 ? "+" : "") + fmt(v);
+
+    const useIsMobile = (breakpoint = 768) => {
+      const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint);
+      useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < breakpoint);
+        window.addEventListener("resize", handler);
+        return () => window.removeEventListener("resize", handler);
+      }, [breakpoint]);
+      return isMobile;
+    };
+
+    const T = {
+      accent: "#d4a052", accentLight: "#e8c88a",
+      accentDim: "rgba(212,160,82,0.3)", accentBg: "rgba(212,160,82,0.08)",
+      accentBorder: "rgba(212,160,82,0.2)",
+      green: "#6ecf8e", red: "#cf6e6e", teal: "#5eead4",
+      indigo: "#a5b4fc", purple: "#c4a0e8", blue: "#52a0d4", emerald: "#34d399",
+      text: "#e8eff8", textMid: "#8a9bb0", textDim: "#5a6b7d", textDark: "#4a5568",
+      panelBg: "rgba(255,255,255,0.02)", panelBorder: "rgba(255,255,255,0.06)",
+    };
+    const mono = { fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 };
+
+    // Dates are stored ISO (YYYY-MM-DD) and shown as 2026AUG18.
+    const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const fmtDate = (iso) => {
+      if (!iso) return "—";
+      const [y, m, d] = iso.split("-");
+      return `${y}${MONTHS[+m - 1]}${d}`;
+    };
+    const todayISO = () => {
+      const d = new Date();
+      return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    };
+    const parseISO = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
+    const uid = () => Math.random().toString(36).slice(2, 10);
+    const sum = (arr) => arr.reduce((a, b) => a + b, 0);
+    const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
+
+    // Accept "1,200", "$80k", "1.2m"
+    const parseMoney = (s) => {
+      const c = String(s).trim().toLowerCase().replace(/[$,\s]/g, "");
+      if (c === "" || c === "-") return 0;
+      const mult = c.endsWith("m") ? 1e6 : c.endsWith("k") ? 1e3 : 1;
+      const n = parseFloat(mult === 1 ? c : c.slice(0, -1)) * mult;
+      return isNaN(n) ? null : n;
+    };
+
+    const inputBase = {
+      background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 6, padding: "6px 8px", fontSize: 13, color: T.text, outline: "none",
+      width: "100%", minWidth: 0, fontFamily: "'DM Sans', sans-serif",
+    };
+
+    const TextIn = ({ value, onChange, placeholder, style }) => (
+      <input className="mn-in" type="text" value={value} placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)} style={{ ...inputBase, ...style }} />
+    );
+
+    // Money input: shows "1,500"; accepts 80k / 1.2m / $1,200. While focused the typed text is kept
+    // as-is. Focus must NOT reformat the text — that would drop the select-all and make typing append.
+    const fmtInput = (v) => (num(v) ? num(v).toLocaleString("en-AU", { maximumFractionDigits: 2 }) : "");
+    const MoneyIn = ({ value, onChange, placeholder = "0", style }) => {
+      const [text, setText] = useState(null);
+      const shown = text != null ? text : fmtInput(value);
+      return (
+        <input className="mn-in" type="text" inputMode="decimal" value={shown} placeholder={placeholder}
+          onFocus={(e) => { setText(fmtInput(value)); e.target.select(); }}
+          onChange={(e) => {
+            setText(e.target.value);
+            const n = parseMoney(e.target.value);
+            if (n != null) onChange(n);
+          }}
+          onBlur={() => setText(null)}
+          style={{ ...inputBase, textAlign: "right", ...mono, fontWeight: 500, ...style }} />
+      );
+    };
+
+    const FreqSelect = ({ value, onChange }) => (
+      <select className="mn-in" value={value} onChange={(e) => onChange(e.target.value)}
+        style={{ ...inputBase, padding: "6px 4px", color: T.textMid, cursor: "pointer" }}>
+        {Object.keys(FREQ).map(f => <option key={f} value={f}>{FREQ_LABEL[f]}</option>)}
+      </select>
+    );
+
+    const XBtn = ({ onClick, title = "Remove" }) => (
+      <button className="mn-x" onClick={onClick} title={title} aria-label={title}
+        style={{
+          background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 6, padding: 0, height: 32, width: 28, cursor: "pointer",
+          color: T.textDim, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center",
+        }}>×</button>
+    );
+
+    // Small on/off pill, e.g. "in retirement" or "counts for FIRE"
+    const Chip = ({ on, onClick, children, color = T.accent, title }) => (
+      <button onClick={onClick} title={title}
+        style={{
+          padding: "2px 8px", borderRadius: 999, cursor: "pointer", fontSize: 10, fontWeight: 600,
+          letterSpacing: "0.03em", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap",
+          background: on ? `${color}18` : "transparent",
+          border: `1px solid ${on ? `${color}60` : "rgba(255,255,255,0.08)"}`,
+          color: on ? color : T.textDark,
+        }}>{on ? "✓ " : ""}{children}</button>
+    );
+
+    const AddBtn = ({ onClick, children }) => (
+      <button onClick={onClick}
+        style={{
+          width: "100%", background: "transparent",
+          border: "1px dashed rgba(255,255,255,0.15)", borderRadius: 6,
+          padding: "7px 12px", cursor: "pointer", color: T.textMid,
+          fontSize: 12, fontWeight: 600, marginTop: 6, fontFamily: "'DM Sans', sans-serif",
+        }}>{children}</button>
+    );
+
+    const Button = ({ onClick, children, primary, disabled, style }) => (
+      <button className={primary && !disabled ? "mn-btn" : undefined} onClick={onClick} disabled={disabled}
+        style={{
+          padding: "7px 16px", borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer",
+          background: primary ? T.accentBg : "transparent",
+          border: `1px solid ${primary ? T.accentDim : "rgba(255,255,255,0.12)"}`,
+          color: primary ? T.accent : T.textMid, opacity: disabled ? 0.45 : 1,
+          fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap", ...style,
+        }}>{children}</button>
+    );
+
+    const Card = ({ title, right, children, style }) => (
+      <div style={{
+        background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+        borderRadius: 12, padding: "16px 18px", minWidth: 0, ...style,
+      }}>
+        {(title || right) && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textMid }}>{title}</div>
+            {right}
+          </div>
+        )}
+        {children}
+      </div>
+    );
+
+    const SubHead = ({ children, right }) => (
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8,
+        fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em",
+        color: T.accent, margin: "18px 0 10px", paddingBottom: 6,
+        borderBottom: `1px solid ${T.accentBorder}`,
+      }}>
+        <span>{children}</span>
+        {right && <span style={{ ...mono, fontSize: 11, color: T.textMid, letterSpacing: 0, textTransform: "none" }}>{right}</span>}
+      </div>
+    );
+
+    const StatCard = ({ label, value, sub, color, progress }) => (
+      <div className="mn-stat-card" style={{
+        background: T.panelBg, border: `1px solid ${T.panelBorder}`,
+        borderRadius: 10, padding: "14px 16px", flex: 1, minWidth: 150,
+      }}>
+        <div style={{ fontSize: 10, color: "#6b7c90", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: color || T.text, ...mono }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: T.textDim, marginTop: 2, lineHeight: 1.4 }}>{sub}</div>}
+        {progress != null && (
+          <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%`, height: "100%", borderRadius: 2, background: color || T.accent, transition: "width 0.3s" }} />
+          </div>
+        )}
+      </div>
+    );
+
+    const TopNav = ({ active }) => (
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {[
+          { id: "money", href: "./money.html", label: "Money" },
+          { id: "loan", href: "./loan.html", label: "Home loan" },
+          { id: "fire", href: "./", label: "FIRE Milestones" },
+        ].map(l => (
+          <a key={l.id} href={l.href} style={{
+            padding: "5px 14px", borderRadius: 999, fontSize: 12, fontWeight: 600, textDecoration: "none",
+            fontFamily: "'DM Sans', sans-serif",
+            background: active === l.id ? T.accentBg : "transparent",
+            border: `1px solid ${active === l.id ? T.accentDim : "rgba(255,255,255,0.08)"}`,
+            color: active === l.id ? T.accent : T.textDim,
+          }}>{l.label}</a>
+        ))}
+      </div>
+    );
+
+    const fmtCents = (v) => v == null || isNaN(v) ? "$0.00"
+      : `$${v.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const yrs = (n) => `${n} yr${n === 1 ? "" : "s"}`;
+    const fmtYM = (months) => {
+      const y = Math.floor(months / 12), mo = Math.round(months % 12);
+      return `${y} yr${y === 1 ? "" : "s"}${mo ? ` ${mo} mo` : ""}`;
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // ─── HOME LOAN ENGINE (day-by-day simulation) ───
+    // ══════════════════════════════════════════════════════════
+    // Australian convention: interest accrues daily on (loan − offset) at rate ÷ 365 and is
+    // charged monthly on the loan's start day-of-month. Repayments follow their own frequency,
+    // starting one period after the loan starts. Extras are offset deposits/withdrawals or
+    // extra loan repayments, once or recurring. Checked against figura.com.au: identical
+    // repayment and payoff dates; total interest within ~0.06%.
+
+    const LOAN_PERIODS = { week: 52, fortnight: 26, month: 12 };
+    const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+    const toISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+    // Add months, clamping to short months (Jan 31 + 1 → Feb 28), never rolling into the next month.
+    const addMonths = (d, n) => {
+      const y = d.getFullYear(), m = d.getMonth() + n;
+      return new Date(y, m, Math.min(d.getDate(), daysInMonth(y + Math.floor(m / 12), ((m % 12) + 12) % 12)));
+    };
+    const dayDiff = (a, b) => Math.round((b - a) / 86400000);
+    const monthDiff = (a, b) => (b.getFullYear() - a.getFullYear()) * 12 + b.getMonth() - a.getMonth();
+    // Same day-of-month as the anchor, clamped to short months (31st → 30th/28th).
+    const sameDom = (anchor, d) => d.getDate() === Math.min(anchor.getDate(), daysInMonth(d.getFullYear(), d.getMonth()));
+
+    function occursOn(freq, anchor, d) {
+      const di = dayDiff(anchor, d);
+      if (di < 0) return false;
+      switch (freq) {
+        case "once": return di === 0;
+        case "week": return di % 7 === 0;
+        case "fortnight": return di % 14 === 0;
+        case "month": return sameDom(anchor, d);
+        case "quarter": return sameDom(anchor, d) && monthDiff(anchor, d) % 3 === 0;
+        case "year": return sameDom(anchor, d) && monthDiff(anchor, d) % 12 === 0;
+        default: return false;
+      }
+    }
+
+    function requiredRepayment(principal, ratePct, termMonths, freq) {
+      const n = LOAN_PERIODS[freq] || 12;
+      const nPay = Math.max(1, Math.round(termMonths / 12 * n));
+      const r = ratePct / 100 / n;
+      return r > 0 ? principal * r / (1 - Math.pow(1 + r, -nPay)) : principal / nPay;
+    }
+
+    function simulateLoan(p) {
+      const start = parseISO(p.startISO);
+      const freq = LOAN_PERIODS[p.freq] ? p.freq : "month";
+      const required = requiredRepayment(p.principal, p.ratePct, p.termMonths, freq);
+      const repay = p.repaymentOverride > 0 ? p.repaymentOverride : required;
+      const daily = p.ratePct / 100 / 365;
+      const extras = (p.extras || []).filter(x => x.on !== false && x.amount > 0 && x.startISO)
+        .map(x => ({ ...x, anchor: parseISO(x.startISO) }));
+      // Recurring repayments start one period after the loan starts. Monthly ones stay anchored
+      // to the start day-of-month (so a loan from the 31st repays on the 28th/30th/31st).
+      const repayAnchor = freq === "month" ? start : addDays(start, freq === "week" ? 7 : 14);
+
+      let bal = p.principal, off = Math.max(0, p.offsetStart || 0), accrued = 0;
+      let totalInterest = 0, totalRepaid = 0, payoff = null, offsetCovers = null;
+      const samples = [{ t: 0, iso: p.startISO, loan: bal, offset: off, effective: Math.max(0, bal - off) }];
+      const maxDays = Math.round(365.25 * (p.maxYears || 60));
+      const payLoan = (amt) => { const x = Math.min(amt, bal); bal -= x; totalRepaid += x; };
+
+      for (let i = 0; i <= maxDays; i++) {
+        const d = addDays(start, i);
+        const chargeDay = sameDom(start, d) && monthDiff(start, d) > 0;
+        if (chargeDay) { bal += accrued; totalInterest += accrued; accrued = 0; }
+        if (occursOn(freq, repayAnchor, d) && (freq !== "month" || monthDiff(start, d) > 0)) {
+          // Final repayment settles interest accrued since the last charge too.
+          if (repay >= bal + accrued) { bal += accrued; totalInterest += accrued; accrued = 0; }
+          payLoan(repay);
+        }
+        for (const x of extras) {
+          if (!occursOn(x.freq, x.anchor, d)) continue;
+          if (x.type === "deposit") off += x.amount;
+          else if (x.type === "withdrawal") off = Math.max(0, off - x.amount);
+          else if (x.type === "extra") { if (x.amount >= bal + accrued) { bal += accrued; totalInterest += accrued; accrued = 0; } payLoan(x.amount); }
+        }
+        if (bal > 0.005 && offsetCovers == null && off >= bal) {
+          offsetCovers = toISO(d);
+          if (p.endWhenOffset) { bal += accrued; totalInterest += accrued; accrued = 0; const x = bal; off -= x; payLoan(x); }
+        }
+        if (bal <= 0.005) { bal = 0; payoff = toISO(d); }
+        if ((chargeDay || payoff) && i > 0) samples.push({ t: i / 365.25, iso: toISO(d), loan: bal, offset: off, effective: Math.max(0, bal - off) });
+        if (payoff) break;
+        const dayInt = Math.max(0, bal - off) * daily;
+        accrued += dayInt;
+      }
+      return { required, repay, totalInterest, totalRepaid, payoffISO: payoff, offsetCoversISO: offsetCovers, samples, offsetEnd: off };
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ─── STORAGE ───
+    // ══════════════════════════════════════════════════════════
+
+    const LOAN_KEY = "fire-loan-au";
+    const MONEY_KEY = "fire-money-au";
+    const FIRE_STORAGE_KEY = "fire-calc-au-inputs";
+    const MONEY_FREQ = { week: 52 / 12, fortnight: 26 / 12, month: 1, quarter: 1 / 3, year: 1 / 12 };
+
+    const LOAN_DEFAULTS = {
+      principal: 600000, ratePct: 6.0, years: 30, months: 0, startISO: null, // null = today
+      freq: "month", repaymentOverride: 0, offsetStart: 20000, endWhenOffset: false,
+      extras: [], // [{ id, on, type: "deposit"|"withdrawal"|"extra", freq, startISO, amount }]
+    };
+    function loadLoan() {
+      try {
+        const raw = localStorage.getItem(LOAN_KEY);
+        if (raw) {
+          const st = JSON.parse(raw);
+          return { ...LOAN_DEFAULTS, ...st, extras: Array.isArray(st.extras) ? st.extras.map(x => ({ ...x, id: x.id || uid() })) : [] };
+        }
+      } catch {}
+      return { ...LOAN_DEFAULTS, extras: [] };
+    }
+    const readJSON = (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } };
+    const FIRE_FALLBACK = { currentAge: 30, targetRetireAge: 55, preservationAge: 60, mortgageRepayment: 0, mortgagePayoffAge: 0 };
+    const loadFire = () => ({ ...FIRE_FALLBACK, ...(readJSON(FIRE_STORAGE_KEY) || {}) });
+
+    // Pull what the Money page already knows: loan + offset balances (latest check-in), the
+    // mortgage repayment (expense row), the rate if the row label has one ("@ 5.28%"), and
+    // monthly offset contributions (allocation rows mentioning "offset").
+    function loanFromMoney(money, startISO) {
+      if (!money) return { patch: null, notes: ["No Money data on this device yet."] };
+      const notes = [], patch = {};
+      const snaps = [...(money.snapshots || [])].sort((a, b) => a.date.localeCompare(b.date));
+      const latest = snaps[snaps.length - 1];
+      const accounts = money.accounts || [];
+      const bal = (a) => latest ? num(latest.balances[a.id]) : 0;
+      const loans = accounts.filter(a => a.cat === "loan");
+      let offsets = accounts.filter(a => a.cat === "cash" && /offset/i.test(a.label || ""));
+      if (!offsets.length) offsets = accounts.filter(a => a.cat === "cash" && a.ef);
+      const loanBal = sum(loans.map(bal)), offBal = sum(offsets.map(bal));
+      if (latest && loanBal > 0) { patch.principal = Math.round(loanBal); notes.push(`loan ${fmtFull(loanBal)} (check-in ${fmtDate(latest.date)})`); }
+      else notes.push("no loan balance yet — enter your mortgage at a Money check-in");
+      if (latest && offsets.length) { patch.offsetStart = Math.round(offBal); notes.push(`offset ${fmtFull(offBal)} (${offsets.map(a => a.label).join(" + ")})`); }
+      const mort = (money.expenses || []).find(e => /mortgage|home loan/i.test(e.label || ""));
+      if (mort) {
+        const monthly = num(mort.amount) * (MONEY_FREQ[mort.freq] || 1);
+        patch.freq = "month"; patch.repaymentOverride = Math.round(monthly * 100) / 100;
+        notes.push(`repayment ${fmtFull(monthly)}/mo`);
+        const rate = /(\d+(?:\.\d+)?)\s*%/.exec(mort.label || "");
+        if (rate) { patch.ratePct = parseFloat(rate[1]); notes.push(`rate ${rate[1]}% (from “${mort.label}”)`); }
+      }
+      const nextMonth = toISO(addMonths(parseISO(startISO), 1));
+      const deps = (money.buckets || []).filter(b => /offset/i.test(b.label || "") && num(b.amount) > 0);
+      if (deps.length) {
+        patch.extras = deps.map(b => ({ id: uid(), on: true, type: "deposit", freq: "month", startISO: nextMonth, amount: num(b.amount), label: b.label, fromMoney: true }));
+        notes.push(`offset deposits ${deps.map(b => `${fmtFull(num(b.amount))}/mo`).join(" + ")}`);
+      }
+      return { patch, notes };
+    }
+
+    const EXTRA_TYPES = { deposit: "Offset deposit", withdrawal: "Offset withdrawal", extra: "Extra repayment" };
+    const EXTRA_FREQ = { once: "Once", week: "Weekly", fortnight: "Fortnightly", month: "Monthly", quarter: "Quarterly", year: "Yearly" };
+    const PER_MONTH = { once: 0, week: 52 / 12, fortnight: 26 / 12, month: 1, quarter: 1 / 3, year: 1 / 12 };
+
+    const LoanTooltip = ({ active, payload, label, startISO }) => {
+      if (!active || !payload || !payload.length) return null;
+      const s = parseISO(startISO);
+      const d = new Date(s.getFullYear(), s.getMonth() + Math.round(label * 12), 1);
+      return (
+        <div style={{ background: "rgba(16,22,36,0.95)", border: `1px solid ${T.accentDim}`, borderRadius: 8, padding: "10px 14px" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.accent, marginBottom: 6 }}>{d.getFullYear()}{MONTHS[d.getMonth()]} · {fmtYM(Math.round(label * 12))}</div>
+          {payload.filter(p => p.value != null).map((p, i) => (
+            <div key={i} style={{ fontSize: 12, color: p.color, marginBottom: 2, display: "flex", gap: 12, justifyContent: "space-between" }}>
+              <span style={{ opacity: 0.8 }}>{p.name}</span><span style={{ ...mono }}>{fmtFull(p.value)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    const selectStyle = { ...inputBase, padding: "6px 4px", color: T.textMid, cursor: "pointer" };
+    const Field = ({ label, children, hint }) => (
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: T.textMid, marginBottom: 4 }}>{label}</div>
+        {children}
+        {hint && <div style={{ fontSize: 11, color: T.textDim, marginTop: 3, fontStyle: "italic", lineHeight: 1.4 }}>{hint}</div>}
+      </div>
+    );
+
+    // ══════════════════════════════════════════════════════════
+    // ─── MAIN COMPONENT ───
+    // ══════════════════════════════════════════════════════════
+
+    function HomeLoan() {
+      const isMobile = useIsMobile();
+      const [loan, setLoan] = useState(loadLoan);
+      const [fire, setFire] = useState(loadFire);
+      const [moneyNote, setMoneyNote] = useState(null);
+      const [fireNote, setFireNote] = useState(null);
+      useEffect(() => { try { localStorage.setItem(LOAN_KEY, JSON.stringify(loan)); } catch {} }, [loan]);
+      useEffect(() => {
+        const refresh = () => setFire(loadFire());
+        const onStorage = (e) => { if (e.key === FIRE_STORAGE_KEY) refresh(); };
+        window.addEventListener("focus", refresh);
+        window.addEventListener("storage", onStorage);
+        return () => { window.removeEventListener("focus", refresh); window.removeEventListener("storage", onStorage); };
+      }, []);
+
+      const set = (patch) => setLoan(l => ({ ...l, ...patch }));
+      const patchExtra = (id, patch) => setLoan(l => ({ ...l, extras: l.extras.map(x => x.id === id ? { ...x, ...patch } : x) }));
+      const startISO = loan.startISO || todayISO();
+      const termMonths = Math.max(1, num(loan.years) * 12 + num(loan.months));
+
+      const sim = useMemo(() => {
+        const p = {
+          principal: num(loan.principal), ratePct: num(loan.ratePct), termMonths, freq: loan.freq,
+          repaymentOverride: num(loan.repaymentOverride), startISO, endWhenOffset: loan.endWhenOffset,
+        };
+        const main = simulateLoan({ ...p, offsetStart: num(loan.offsetStart), extras: loan.extras });
+        const comp = simulateLoan(p); // same repayments, no offset and no extras
+        return { main, comp };
+      }, [loan, startISO, termMonths]);
+      const { main, comp } = sim;
+
+      const start = parseISO(startISO);
+      const monthsTo = (iso) => iso ? monthDiff(start, parseISO(iso)) + (parseISO(iso).getDate() - start.getDate()) / 30.44 : null;
+      const mainMonths = monthsTo(main.payoffISO), compMonths = monthsTo(comp.payoffISO);
+      const interestSaved = comp.payoffISO && main.payoffISO ? comp.totalInterest - main.totalInterest : null;
+      const perLabel = { week: "/wk", fortnight: "/fn", month: "/mo" }[loan.freq] || "/mo";
+      const belowMin = num(loan.repaymentOverride) > 0 && num(loan.repaymentOverride) < main.required - 0.005;
+
+      // Chart rows keyed by month since start
+      const chartData = useMemo(() => {
+        const rows = [];
+        const put = (s, fields) => { const m = Math.round(s.t * 12); rows[m] = { ...(rows[m] || { t: m / 12 }), ...fields }; };
+        main.samples.forEach(s => put(s, { loan: Math.round(s.loan), offset: Math.round(s.offset), effective: Math.round(s.effective) }));
+        comp.samples.forEach(s => put(s, { comparison: Math.round(s.loan) }));
+        // If either loan never ends, don't let its 60-year run squash the chart.
+        const endT = (r) => r.payoffISO ? r.samples[r.samples.length - 1].t : null;
+        const mT = endT(main), cT = endT(comp);
+        const cap = mT == null ? 40 : cT == null ? mT * 1.25 + 1 : Math.max(mT, cT);
+        return rows.filter(r => r && r.t <= cap + 1e-9);
+      }, [main, comp]);
+      const maxT = chartData.length ? chartData[chartData.length - 1].t : 1;
+      const ticks = []; for (let y = 0; y <= Math.ceil(maxT); y += maxT > 20 ? 5 : maxT > 8 ? 2 : 1) ticks.push(y);
+
+      // ─── FIRE link ───
+      // Monthly cost while the loan runs = scheduled repayment + any recurring extra repayments.
+      const extraMonthly = sum(loan.extras.filter(x => x.on !== false && x.type === "extra").map(x => num(x.amount) * (PER_MONTH[x.freq] || 0)));
+      const repayMonthly = main.repay * (LOAN_PERIODS[loan.freq] || 12) / 12 + extraMonthly;
+      const today = parseISO(todayISO());
+      const yearsLeft = main.payoffISO ? Math.max(0, (parseISO(main.payoffISO) - today) / (365.25 * 86400000)) : null;
+      const payoffAge = yearsLeft != null ? num(fire.currentAge) + Math.ceil(yearsLeft - 1e-6) : null;
+      const fireSynced = Math.round(num(fire.mortgageRepayment)) === Math.round(repayMonthly) && num(fire.mortgagePayoffAge) === payoffAge;
+      const fireHasMortgage = num(fire.mortgageRepayment) > 0 && num(fire.mortgagePayoffAge) > num(fire.currentAge);
+      const writeFire = (patch, note) => {
+        const existing = readJSON(FIRE_STORAGE_KEY) || {};
+        try { localStorage.setItem(FIRE_STORAGE_KEY, JSON.stringify({ ...existing, ...patch })); } catch {}
+        setFire(loadFire()); setFireNote(note);
+      };
+
+      const fillFromMoney = () => {
+        const { patch, notes } = loanFromMoney(readJSON(MONEY_KEY), startISO);
+        if (patch) setLoan(l => ({
+          ...l, ...patch,
+          // replace only the deposits that came from Money last time; keep hand-entered extras
+          extras: patch.extras ? [...l.extras.filter(x => !x.fromMoney), ...patch.extras] : l.extras,
+        }));
+        setMoneyNote(notes);
+      };
+
+      const pad = isMobile ? 16 : 32;
+      const cardGap = { marginBottom: 16 };
+
+      return (
+        <div style={{
+          minHeight: "100vh", background: "linear-gradient(165deg, #0b1120 0%, #101624 40%, #141e30 100%)",
+          color: "#c8d5e2", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden",
+        }}>
+          <div style={{
+            position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0,
+            background: "radial-gradient(ellipse at 20% 0%, rgba(212,160,82,0.04) 0%, transparent 60%), radial-gradient(ellipse at 80% 100%, rgba(76,140,120,0.03) 0%, transparent 50%)",
+          }} />
+          <div style={{ position: "relative", zIndex: 1, maxWidth: 1400, margin: "0 auto", padding: `${isMobile ? 20 : 28}px ${pad}px 96px` }}>
+            <TopNav active="loan" />
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+              <h1 style={{
+                fontSize: isMobile ? 22 : 28, fontWeight: 800, margin: 0, letterSpacing: "-0.02em", fontFamily: "'Playfair Display', serif",
+                background: `linear-gradient(135deg, ${T.accent}, ${T.accentLight})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              }}>Home loan</h1>
+              <span style={{ fontSize: 13, color: T.textDim, fontWeight: 500, letterSpacing: "0.04em" }}>Day-by-day simulation · offset · extra repayments</span>
+            </div>
+            <p style={{ fontSize: 13, color: "#4a5b6d", margin: "6px 0 18px", maxWidth: 760, lineHeight: 1.5 }}>
+              Interest is calculated daily on the loan minus your offset and charged monthly, like a real Australian loan.
+              Pull your balances from Money, then send the payoff age to FIRE Milestones so retirement plans include the repayments.
+            </p>
+
+            <div style={{ display: "flex", gap: 20, flexDirection: isMobile ? "column" : "row", alignItems: "flex-start" }}>
+              {/* ── Inputs ── */}
+              <div style={{ width: isMobile ? "100%" : 320, flexShrink: 0 }}>
+                <Card style={cardGap}>
+                  <Button primary onClick={fillFromMoney} style={{ width: "100%" }}>⇣ Fill from Money</Button>
+                  {moneyNote && (
+                    <div style={{ fontSize: 11, color: T.textMid, marginTop: 8, lineHeight: 1.5 }}>
+                      {moneyNote.map((n, i) => <div key={i}>· {n}</div>)}
+                      <div style={{ color: T.textDim, marginTop: 4 }}>Set the rate and remaining term yourself if they weren't found.</div>
+                    </div>
+                  )}
+
+                  <SubHead>Loan</SubHead>
+                  <Field label="Loan balance"><MoneyIn value={loan.principal} onChange={(v) => set({ principal: v })} /></Field>
+                  <Field label="Interest rate (% p.a.)">
+                    <input className="mn-in" type="text" inputMode="decimal" value={loan.ratePct}
+                      onChange={(e) => set({ ratePct: e.target.value.replace(/[^\d.]/g, "") })}
+                      style={{ ...inputBase, textAlign: "right", ...mono, fontWeight: 500 }} />
+                  </Field>
+                  <Field label="Remaining term" hint="Sets the minimum repayment.">
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                      {[["years", "yrs", 40], ["months", "mo", 11]].map(([k, u, mx]) => (
+                        <div key={k} style={{ position: "relative" }}>
+                          <input className="mn-in" type="number" min={0} max={mx} value={loan[k]}
+                            onChange={(e) => set({ [k]: e.target.value === "" ? "" : Math.min(mx, Math.max(0, parseInt(e.target.value) || 0)) })}
+                            style={{ ...inputBase, textAlign: "right", paddingRight: 34, ...mono, fontWeight: 500 }} />
+                          <span style={{ position: "absolute", right: 8, top: 8, fontSize: 11, color: T.textDim }}>{u}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label="Start date" hint={loan.startISO ? undefined : "Today — change to model a loan that started earlier."}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input className="mn-in" type="date" value={startISO} onChange={(e) => e.target.value && set({ startISO: e.target.value })}
+                        style={{ ...inputBase, ...mono, fontWeight: 500 }} />
+                      {loan.startISO && <Button onClick={() => set({ startISO: null })}>Today</Button>}
+                    </div>
+                  </Field>
+
+                  <SubHead>Repayments</SubHead>
+                  <Field label="Frequency">
+                    <select className="mn-in" value={loan.freq} onChange={(e) => set({ freq: e.target.value, repaymentOverride: 0 })} style={selectStyle}>
+                      <option value="month">Monthly</option><option value="fortnight">Fortnightly</option><option value="week">Weekly</option>
+                    </select>
+                  </Field>
+                  <Field label="Repayment amount (optional)"
+                    hint={belowMin ? undefined : `Minimum for this term: ${fmtCents(main.required)}${perLabel}. Enter more to pay it off sooner.`}>
+                    <MoneyIn value={loan.repaymentOverride} placeholder={main.required.toFixed(2)} onChange={(v) => set({ repaymentOverride: v })} />
+                    {belowMin && (
+                      <div style={{ fontSize: 11, color: T.red, marginTop: 3, lineHeight: 1.4 }}>
+                        Below the {fmtCents(main.required)}{perLabel} minimum for a {fmtYM(termMonths)} term — the loan will run longer.
+                      </div>
+                    )}
+                  </Field>
+
+                  <SubHead>Offset account</SubHead>
+                  <Field label="Offset balance today"><MoneyIn value={loan.offsetStart} onChange={(v) => set({ offsetStart: v })} /></Field>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Chip on={loan.endWhenOffset} onClick={() => set({ endWhenOffset: !loan.endWhenOffset })}>End loan when offset covers it</Chip>
+                  </div>
+                  <div style={{ fontSize: 11, color: T.textDim, marginTop: 6, lineHeight: 1.4 }}>
+                    When on, the offset clears the loan the day it's large enough. Add regular deposits under Extra transactions.
+                  </div>
+                </Card>
+              </div>
+
+              {/* ── Results ── */}
+              <div style={{ flex: 1, minWidth: 0, width: "100%" }}>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", ...cardGap }}>
+                  <StatCard label={`Repayment${perLabel}`} value={fmtCents(main.repay)} color={T.text}
+                    sub={num(loan.repaymentOverride) > 0 ? `minimum ${fmtCents(main.required)}` : "minimum for the term"} />
+                  <StatCard label="Total interest" value={main.payoffISO ? fmtCents(main.totalInterest) : "—"} color={T.red}
+                    sub={main.payoffISO ? `${fmtCents(main.totalRepaid)} repaid in total` : "never paid off"} />
+                  <StatCard label="Paid off" value={main.payoffISO ? fmtDate(main.payoffISO) : "Never"} color={T.accent}
+                    sub={main.payoffISO ? fmtYM(Math.round(mainMonths)) : "repayments don't cover interest"} />
+                  <StatCard label="Interest saved" value={interestSaved != null ? fmt(interestSaved) : main.payoffISO ? "All of it" : "—"} color={T.green}
+                    sub={interestSaved != null ? `${fmtYM(Math.max(0, Math.round(compMonths - mainMonths)))} sooner than no offset/extras`
+                      : main.payoffISO ? "without the offset & extras this repayment never clears the loan" : "vs no offset or extras"} />
+                </div>
+
+                {/* Only worth flagging when it happens well before the loan would end anyway */}
+                {main.offsetCoversISO && !loan.endWhenOffset && main.payoffISO && monthsTo(main.payoffISO) - monthsTo(main.offsetCoversISO) >= 12 && (
+                  <div style={{ ...cardGap, padding: "10px 14px", borderRadius: 10, background: "rgba(82,160,212,0.10)", border: "1px solid rgba(82,160,212,0.35)", fontSize: 12, color: T.text, lineHeight: 1.5 }}>
+                    <strong style={{ color: T.blue }}>ⓘ Offset overtakes the loan on {fmtDate(main.offsetCoversISO)}</strong> — from then it's effectively paid off
+                    (100% offset, no interest). Tick “End loan when offset covers it” to model clearing it that day.
+                  </div>
+                )}
+                {!main.payoffISO && (
+                  <div style={{ ...cardGap, padding: "10px 14px", borderRadius: 10, background: "rgba(207,110,110,0.08)", border: "1px solid rgba(207,110,110,0.3)", fontSize: 12, color: T.red }}>
+                    ⚠ At {fmtCents(main.repay)}{perLabel} the repayments don't cover the interest — this loan is never paid off.
+                  </div>
+                )}
+
+                <Card title="Loan balance over time" style={cardGap}>
+                  <ResponsiveContainer width="100%" height={isMobile ? 280 : 380}>
+                    <ComposedChart data={chartData} margin={{ top: 10, right: 12, left: 0, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                      <XAxis dataKey="t" type="number" domain={[0, "dataMax"]} ticks={ticks} tickFormatter={(v) => `${v} yrs`}
+                        tick={{ fontSize: 10, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} />
+                      <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fill: T.textDim }} axisLine={{ stroke: "rgba(255,255,255,0.08)" }} tickLine={false} width={62} />
+                      <Tooltip content={<LoanTooltip startISO={startISO} />} />
+                      <Legend verticalAlign="top" height={30} formatter={(val) => <span style={{ color: T.textMid, fontSize: 11 }}>{val}</span>} />
+                      <Line type="monotone" dataKey="comparison" name="No offset/extras" stroke={T.textDark} strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="offset" name="Offset" stroke={T.green} strokeWidth={1.8} dot={false} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="effective" name="Loan − offset" stroke={T.purple} strokeWidth={1.8} dot={false} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="loan" name="Loan balance" stroke="#818cf8" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                      {fire.targetRetireAge > fire.currentAge && (() => {
+                        const tRet = (fire.targetRetireAge - fire.currentAge) + monthDiff(start, today) / 12;
+                        return tRet > 0 && tRet <= maxT ? (
+                          <ReferenceLine x={tRet} stroke={T.indigo} strokeDasharray="3 3" strokeOpacity={0.6}
+                            label={{ value: `Retire ${fire.targetRetireAge}`, position: "insideTopRight", fill: T.indigo, fontSize: 10, fontWeight: 600 }} />
+                        ) : null;
+                      })()}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </Card>
+
+                <Card title="Extra transactions" style={cardGap}
+                  right={<span style={{ fontSize: 11, color: T.textDim }}>offset deposits, withdrawals, extra repayments</span>}>
+                  {loan.extras.length === 0 && (
+                    <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6 }}>None yet — e.g. a monthly offset deposit, a bonus once a year, or a reno withdrawal.</div>
+                  )}
+                  {loan.extras.map(x => (
+                    <div key={x.id} style={{
+                      display: "grid", alignItems: "center", gap: 6, marginBottom: 8, opacity: x.on === false ? 0.45 : 1,
+                      gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr) 28px" : "auto minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.1fr) 120px 28px",
+                    }}>
+                      <div style={isMobile ? { gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "center" } : undefined}>
+                        <Chip on={x.on !== false} color={T.green} onClick={() => patchExtra(x.id, { on: x.on === false })} title="Include in the simulation">on</Chip>
+                        {isMobile && x.label && <span style={{ fontSize: 11, color: T.textDim }}>{x.label}</span>}
+                      </div>
+                      <select className="mn-in" value={x.type} onChange={(e) => patchExtra(x.id, { type: e.target.value })}
+                        style={{ ...selectStyle, color: x.type === "withdrawal" ? T.red : x.type === "extra" ? T.accent : T.green }}>
+                        {Object.keys(EXTRA_TYPES).map(k => <option key={k} value={k}>{EXTRA_TYPES[k]}</option>)}
+                      </select>
+                      <select className="mn-in" value={x.freq} onChange={(e) => patchExtra(x.id, { freq: e.target.value })} style={selectStyle}>
+                        {Object.keys(EXTRA_FREQ).map(k => <option key={k} value={k}>{EXTRA_FREQ[k]}</option>)}
+                      </select>
+                      <input className="mn-in" type="date" value={x.startISO} title={x.freq === "once" ? "Date" : "First date"}
+                        onChange={(e) => e.target.value && patchExtra(x.id, { startISO: e.target.value })}
+                        style={{ ...inputBase, ...mono, fontWeight: 500, fontSize: 12 }} />
+                      <MoneyIn value={x.amount} onChange={(v) => patchExtra(x.id, { amount: v })} />
+                      <XBtn onClick={() => setLoan(l => ({ ...l, extras: l.extras.filter(y => y.id !== x.id) }))} />
+                    </div>
+                  ))}
+                  <AddBtn onClick={() => {
+                    setLoan(l => ({ ...l, extras: [...l.extras, {
+                      id: uid(), on: true, type: "deposit", freq: "month", amount: 1000,
+                      startISO: toISO(addMonths(parseISO(startISO), 1)),
+                    }] }));
+                  }}>+ Add transaction</AddBtn>
+                </Card>
+
+                <Card title="Send to FIRE Milestones">
+                  {main.payoffISO ? (
+                    <>
+                      <div style={{ fontSize: 14, color: T.text, lineHeight: 1.5 }}>
+                        Mortgage-free at <strong style={{ color: T.accent }}>age {payoffAge}</strong> ({fmtDate(main.payoffISO)}) ·{" "}
+                        {payoffAge > fire.targetRetireAge
+                          ? <span style={{ color: T.red }}>{yrs(payoffAge - fire.targetRetireAge)} after you plan to retire at {fire.targetRetireAge}</span>
+                          : <span style={{ color: T.green }}>before you retire at {fire.targetRetireAge} ✓</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: T.textMid, marginTop: 6, lineHeight: 1.5 }}>
+                        FIRE will add <strong style={{ ...mono, color: T.text }}>{fmtFull(repayMonthly)}/mo</strong> of repayments
+                        {extraMonthly > 0 ? " (incl. recurring extra repayments)" : ""} to your spending until age {payoffAge}. Repayments are fixed
+                        in dollars, so FIRE shrinks them with inflation in today's $.
+                      </div>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+                        <Button primary disabled={fireSynced}
+                          onClick={() => writeFire({ mortgageRepayment: Math.round(repayMonthly), mortgagePayoffAge: payoffAge }, `FIRE now models ${fmtFull(repayMonthly)}/mo until age ${payoffAge}.`)}>
+                          {fireSynced ? "FIRE is up to date" : "Update FIRE"}
+                        </Button>
+                        {fireHasMortgage && (
+                          <Button onClick={() => writeFire({ mortgageRepayment: 0, mortgagePayoffAge: 0 }, "Mortgage removed from FIRE.")}>Remove from FIRE</Button>
+                        )}
+                        <a href="./" style={{ fontSize: 12, color: T.accent, textDecoration: "none", fontWeight: 600 }}>Open FIRE Milestones →</a>
+                      </div>
+                      <div style={{ fontSize: 11, color: T.textDim, marginTop: 8 }}>
+                        FIRE currently: {fireHasMortgage ? `${fmtFull(fire.mortgageRepayment)}/mo until age ${fire.mortgagePayoffAge}` : "no mortgage modelled"} · your age {fire.currentAge}
+                      </div>
+                      {fireNote && <div style={{ fontSize: 11, color: T.green, marginTop: 6 }}>✓ {fireNote}</div>}
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 12, color: T.textDim }}>Fix the repayment so the loan gets paid off, then send it to FIRE.</div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<HomeLoan />);
+  </script>
+  <!-- ── PWA: floating backup/restore + service-worker registration (same as index.html) ── -->
+  <style>
+    .pwa-fab-wrap {
+      position: fixed; z-index: 9999; font-family: 'DM Sans', system-ui, sans-serif; display: flex; gap: 6px;
+      bottom: max(16px, env(safe-area-inset-bottom, 0px) + 12px);
+      right:  max(16px, env(safe-area-inset-right, 0px) + 12px);
+    }
+    .pwa-fab {
+      padding: 8px 12px; border-radius: 999px;
+      background: rgba(11, 17, 32, 0.88);
+      color: #d4a052;
+      border: 1px solid rgba(212, 160, 82, 0.45);
+      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+      cursor: pointer;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      transition: .15s; box-shadow: 0 4px 14px rgba(0,0,0,.4);
+    }
+    .pwa-fab:hover { background: rgba(212,160,82,0.18); color: #fbbf24; }
+    .pwa-fab:active { transform: scale(0.95); }
+  </style>
+  <div class="pwa-fab-wrap">
+    <button class="pwa-fab" onclick="pwaExport()" title="Download all FIRE data as JSON">⤓ Backup</button>
+    <button class="pwa-fab" onclick="document.getElementById('pwa-restore-file').click()" title="Restore from JSON">⤒ Restore</button>
+    <input id="pwa-restore-file" type="file" accept="application/json" style="display:none" onchange="pwaImport(event)" />
+  </div>
+  <script>
+  (function(){
+    window.pwaExport = function(){
+      var dump = { _meta: { app: 'fire-au', exportedAt: new Date().toISOString() } };
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i), v = localStorage.getItem(k);
+        try { v = JSON.parse(v); } catch (_) {}
+        dump[k] = v;
+      }
+      var blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'fire-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    window.pwaImport = function(e){
+      var f = e.target.files[0]; if (!f) return;
+      e.target.value = ''; // let the same file be picked again
+      if (!confirm('Restore will overwrite your current FIRE data with the backup. Continue?')) return;
+      var r = new FileReader();
+      r.onload = function(){
+        try {
+          var parsed = JSON.parse(r.result);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('shape');
+          Object.keys(parsed).forEach(function(k){
+            if (k.charAt(0) === '_') return;
+            var v = parsed[k];
+            localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+          });
+          location.reload();
+        } catch (err) { alert('That file does not look like a valid backup.'); }
+      };
+      r.readAsText(f);
+    };
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function(){
+        navigator.serviceWorker.register('./sw.js').then(function(reg){
+          if (reg && reg.update) { try { reg.update(); } catch(_){} }
+        }).catch(function(err){
+          console.warn('SW registration failed:', err);
+        });
+      });
+    }
+  })();
+  </script>
+</body>
+</html>

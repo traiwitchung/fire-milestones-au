@@ -1,6 +1,6 @@
 # FIRE Milestones · Australia
 
-Offline-first PWA for tracking Financial Independence / Retire Early milestones (Coast FIRE, Barista FIRE, Full FIRE) tuned for Australian super rules, plus a **Money** page for budgeting and net-worth tracking that feeds the FIRE plan. Pure static HTML/CSS/JS — React via CDN, no build step, no backend. Data stays on your device.
+Offline-first PWA for tracking Financial Independence / Retire Early milestones (Coast FIRE, Barista FIRE, Full FIRE) tuned for Australian super rules, plus a **Money** page (budget + net worth) and a **Home loan** calculator, both of which feed the FIRE plan. Pure static HTML/CSS/JS — React via CDN, no build step, no backend. Data stays on your device.
 
 ## Deploy to GitHub Pages
 
@@ -41,6 +41,7 @@ Without this bump, installed devices keep serving the old cached build.
 
 - `index.html` — the Milestones app (entry point)
 - `money.html` — Money page: monthly budget (any frequency → /month), surplus allocation, net-worth check-ins + history chart, emergency-fund ladder, and a "Send to FIRE Milestones" panel that writes super/outside balances, monthly saving and retirement spending into the Milestones inputs
+- `loan.html` — Home loan calculator: day-by-day simulation (interest accrues daily on loan − offset, charged monthly), offset account, recurring/one-off extra transactions, comparison vs no offset. Can fill itself from the Money page and send the repayment + payoff age to FIRE Milestones, which then adds the repayments to spending until that age
 - `manifest.json` — PWA manifest
 - `sw.js` — service worker with versioned cache
 - `icon-180/192/512.png` — flame app icons

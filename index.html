@@ -229,9 +229,10 @@
     };
 
     const TopNav = ({ active }) => (
-      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
         {[
           { id: "money", href: "./money.html", label: "Money" },
+          { id: "loan", href: "./loan.html", label: "Home loan" },
           { id: "fire", href: "./", label: "FIRE Milestones" },
         ].map(l => (
           <a key={l.id} href={l.href} style={{
@@ -336,6 +337,9 @@
       // Default 100% gain share = treat every $ withdrawn as fully taxable gain
       // (conservative — i.e. $100k out → $30k tax → $70k net).
       minCgtRate: 30, realizedGainShare: 100,
+      // Optional mortgage (set from the Home loan page): monthly repayment in nominal $,
+      // paid until this age. 0 = no mortgage modelled.
+      mortgageRepayment: 0, mortgagePayoffAge: 0,
     };
     const MS_DEFAULTS = {
       coastJobIncome: 50000,
@@ -395,6 +399,8 @@
         ["Real Salary Growth (%)", inputs.salaryGrowthRate || 0],
         ["Super Earnings Tax (%)", inputs.superEarningsTax],
         ["SWR (%)", inputs.swr],
+        ["Mortgage Repayment (monthly)", inputs.mortgageRepayment || 0],
+        ["Mortgage Paid Off At Age", inputs.mortgagePayoffAge || ""],
         ["", ""],
         ["MILESTONES", "STATUS / YEAR"],
         ["Coast FIRE @ retirement age", results.coastRetire.label],
@@ -458,6 +464,8 @@
       const [salaryGrowthRate, setSalaryGrowthRate] = useState(fireSaved.salaryGrowthRate || 0);
       const [minCgtRate, setMinCgtRate] = useState(fireSaved.minCgtRate);
       const [realizedGainShare, setRealizedGainShare] = useState(fireSaved.realizedGainShare);
+      const [mortgageRepayment, setMortgageRepayment] = useState(fireSaved.mortgageRepayment || 0);
+      const [mortgagePayoffAge, setMortgagePayoffAge] = useState(fireSaved.mortgagePayoffAge || 0);
 
       // Milestone-specific
       const [coastJobIncome, setCoastJobIncome] = useState(msSaved.coastJobIncome);
@@ -487,6 +495,7 @@
         returnRate, inflationRate, sgRate, swr,
         superEarningsTax, annualSpending, salaryGrowthRate,
         minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
       };
       const msInputs = { coastJobIncome, baristaIncome, coastStartAge, purchases };
       const fireRef = useRef(fireInputs); fireRef.current = fireInputs;
@@ -527,6 +536,7 @@
         returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
         coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
       }), [
         currentAge, targetRetireAge, preservationAge,
         superBalance, outsideBalance,
@@ -534,6 +544,7 @@
         returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
         coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
       ]);
 
       // Effective CGT drag on any outside-super withdrawal:
@@ -546,8 +557,9 @@
       // Cash-flow sanity: can this salary actually fund spending + planned saving?
       const superSacrifice = voluntarySuper * 12;
       const takeHome = annualSalary - superSacrifice - calcIncomeTax(Math.max(0, annualSalary - superSacrifice));
+      const mortgageNow = results.mortOn ? mortgageRepayment * 12 : 0;
       const cashflowShort = annualSalary > 0
-        ? Math.max(0, annualSpending + monthlySaving * 12 - takeHome) : 0;
+        ? Math.max(0, annualSpending + mortgageNow + monthlySaving * 12 - takeHome) : 0;
 
       const [chartEndAge, setChartEndAge] = useState(Math.min(75, targetRetireAge + 15));
       const [projectionMode, setProjectionMode] = useState("full");
@@ -656,10 +668,24 @@
                   background: "rgba(207,110,110,0.08)", border: "1px solid rgba(207,110,110,0.25)",
                   borderRadius: 6, marginTop: -6, marginBottom: 12,
                 }}>
-                  ⚠ Spending + saving exceeds estimated take-home pay ({fmt(takeHome)}/yr after tax &amp; super sacrifice)
+                  ⚠ Spending{mortgageNow > 0 ? " + mortgage" : ""} + saving exceeds estimated take-home pay ({fmt(takeHome)}/yr after tax &amp; super sacrifice)
                   by <strong>{fmt(cashflowShort)}/yr</strong>. Lower one of them, or the plan assumes money you don't have.
                 </div>
               )}
+
+              </Section>
+              <Section title="Mortgage" defaultOpen={mortgageRepayment > 0}
+                summary={mortgageRepayment > 0 ? undefined : "None modelled — send it from the Home loan page, or tap to add"}>
+              <SliderInput label="Mortgage Repayment (monthly)" value={mortgageRepayment} onChange={setMortgageRepayment} min={0} max={10000} step={50} format="currency" noMaxClamp
+                helpText="Keep it OUT of Annual Spending — it's added on top until it's paid off. Fixed in dollars, so inflation shrinks it in today's $." />
+              {mortgageRepayment > 0 && (
+                <SliderInput label="Paid Off At Age" value={Math.max(currentAge, mortgagePayoffAge)} onChange={setMortgagePayoffAge}
+                  min={currentAge} max={90} step={1} suffix=" yrs"
+                  helpText={mortgagePayoffAge > targetRetireAge
+                    ? `${mortgagePayoffAge - targetRetireAge} yr${mortgagePayoffAge - targetRetireAge === 1 ? "" : "s"} of repayments after you retire at ${targetRetireAge} — the plan funds them.`
+                    : mortgagePayoffAge > currentAge ? `Paid off before you retire at ${targetRetireAge}.` : "At your current age = already paid off (not modelled)."} />
+              )}
+              <a href="./loan.html" style={{ fontSize: 11, color: T.accent, textDecoration: "none", fontWeight: 600 }}>Open Home loan calculator →</a>
 
               </Section>
               <Section title="Coast Phase Job">
@@ -1029,6 +1055,12 @@
                     <>Barista FIRE not reachable with current inputs — showing Full FIRE trajectory.</>
                   )}
                 </div>
+                {results.mortOn && (
+                  <div style={{ paddingLeft: 20, paddingRight: 16, marginBottom: 6, fontSize: 11, color: T.purple }}>
+                    Includes mortgage repayments of {fmtFull(mortgageRepayment)}/mo until age {mortgagePayoffAge}
+                    {mortgagePayoffAge > targetRetireAge ? ` — ${mortgagePayoffAge - targetRetireAge} year${mortgagePayoffAge - targetRetireAge === 1 ? "" : "s"} into retirement.` : " (paid off before retirement)."}
+                  </div>
+                )}
                 {/* Plan health: does the money last? */}
                 <div style={{ paddingLeft: 20, paddingRight: 16, marginBottom: 8, fontSize: 12, lineHeight: 1.5 }}>
                   {depletedAge != null ? (
@@ -1097,6 +1129,10 @@
                     )}
                     <ReferenceLine x={preservationAge} stroke={T.textMid} strokeDasharray="2 4" strokeOpacity={0.3}
                       label={{ value: `Pres ${preservationAge}`, position: "insideTopRight", fill: T.textMid, fontSize: 9, dy: showCoastEarliestMarker ? 64 : 48 }} />
+                    {results.mortOn && results.mortgageEndAge <= chartEndAge && (
+                      <ReferenceLine x={results.mortgageEndAge} stroke={T.purple} strokeDasharray="2 4" strokeOpacity={0.5}
+                        label={{ value: `Mortgage-free ${results.mortgageEndAge}`, position: "insideBottomLeft", fill: T.purple, fontSize: 9, fontWeight: 600, dy: -34 }} />
+                    )}
                     {depletedAge != null && depletedAge <= chartEndAge && (
                       <ReferenceLine x={depletedAge} stroke={T.red} strokeOpacity={0.7}
                         label={{ value: `Runs out ${depletedAge}`, position: "insideBottomLeft", fill: T.red, fontSize: 10, fontWeight: 600, dy: -18 }} />
@@ -1143,7 +1179,7 @@
                 FIRE number = spending ÷ {swr}% SWR ·
                 Coast FIRE uses portfolio + ongoing SG only (no voluntary contributions) ·
                 Income tax: 2026-27 brackets + LITO + Medicare levy (low-income shade-in) ·
-                Concessional cap $30k{salaryGrowthRate > 0 ? ` · Real salary growth ${salaryGrowthRate}%/yr` : ""} ·
+                Concessional cap $30k{results.mortOn ? ` · Mortgage ${fmtFull(mortgageRepayment)}/mo (nominal) until ${mortgagePayoffAge}` : ""}{salaryGrowthRate > 0 ? ` · Real salary growth ${salaryGrowthRate}%/yr` : ""} ·
                 All figures in today's dollars · Projections are estimates, not guarantees.
               </div>
             </div>
@@ -1257,6 +1293,7 @@
         returnRate, inflationRate, sgRate, swr, superEarningsTax, salaryGrowthRate,
         coastJobIncome, baristaIncome, coastStartAge, purchases,
         minCgtRate, realizedGainShare,
+        mortgageRepayment, mortgagePayoffAge,
       } = opts;
 
       const nomRet = returnRate / 100;
@@ -1299,6 +1336,22 @@
         return sum;
       };
 
+      // ─── Mortgage (optional, from the Home loan page) ───
+      // Repayments continue until mortgagePayoffAge on top of annualSpending. They're fixed in
+      // nominal dollars, so in this today's-$ simulation they shrink with inflation each year.
+      // While working full-time the repayment is assumed to come out of salary before saving.
+      const mortOn = (mortgageRepayment || 0) > 0 && (mortgagePayoffAge || 0) > currentAge;
+      const mortAt = (age) => (mortOn && age < mortgagePayoffAge)
+        ? mortgageRepayment * 12 / Math.pow(1 + infl, Math.max(0, age - currentAge)) : 0;
+      // Present value at `age` of the repayments still to come — extra assets needed on top of
+      // the FIRE number when a milestone is tested before the loan is paid off.
+      const mortPVFrom = (age) => {
+        if (!mortOn) return 0;
+        let pv = 0;
+        for (let a = age; a < mortgagePayoffAge; a++) pv += mortAt(a) / Math.pow(1 + realRetOut, a - age);
+        return pv;
+      };
+
       // ─── Bridge fund (PV annuity) ───
       const bridgePV = (yrs, annualGap) => {
         if (yrs <= 0 || annualGap <= 0) return 0;
@@ -1316,6 +1369,7 @@
       const coastJobNetIncome = coastJobContribs.netSalary;
       const coastJobNetSuper = coastJobContribs.netSuperContrib;
       const coastJobGap = Math.max(0, annualSpending - coastJobNetIncome);
+      const coastGapAt = (age) => Math.max(0, annualSpending + mortAt(age) - coastJobNetIncome);
 
       // ─── canCoastAt: at age A with sNow/oNow, can I stop investing
       //    AND retire at retireAge funding annualSpending? ───
@@ -1333,11 +1387,11 @@
           if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper) + coastJobNetSuper;
-          o = o * (1 + realRetOut) - grossUp(coastJobGap);
+          o = o * (1 + realRetOut) - grossUp(coastGapAt(a));
           if (o < 0) return false;
         }
         if (retireAge >= preservationAge) {
-          return (s + o) >= fireNumber;
+          return (s + o) >= fireNumber + mortPVFrom(retireAge);
         }
         // Bridge phase: outside funds full spending until preservation
         for (let a = retireAge; a < preservationAge; a++) {
@@ -1345,10 +1399,10 @@
           if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper);
-          o = o * (1 + realRetOut) - grossUp(annualSpending);
+          o = o * (1 + realRetOut) - grossUp(annualSpending + mortAt(a));
           if (o < 0) return false;
         }
-        return (s + o) >= fireNumber;
+        return (s + o) >= fireNumber + mortPVFrom(preservationAge);
       };
 
       // ─── Find Coast FIRE age (with given retireAge target) ───
@@ -1383,6 +1437,7 @@
 
       const baristaNetIncome = baristaIncome - calcIncomeTax(baristaIncome);
       const baristaSpendingGap = Math.max(0, annualSpending - baristaNetIncome);
+      const baristaGapAt = (age) => Math.max(0, annualSpending + mortAt(age) - baristaNetIncome);
       const baristaSGContrib = calcYearContribs(baristaIncome, sg, 0, cap);
 
       // Simulate the full plan for a given downshift age. Returns the (super, outside)
@@ -1404,7 +1459,7 @@
           if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return null;
           s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
-          o = o * (1 + realRetOut) - grossUp(baristaSpendingGap);
+          o = o * (1 + realRetOut) - grossUp(baristaGapAt(age));
           if (o < 0) return null; // outside ran out during barista years
         }
         return { s, o };
@@ -1413,7 +1468,7 @@
       // Does a given (super, outside) pair at targetRetireAge survive full retirement?
       const survivesFullRetirement = (sAtRet, oAtRet) => {
         if (targetRetireAge >= preservationAge) {
-          return (sAtRet + oAtRet) * swrDec >= annualSpending;
+          return (sAtRet + oAtRet) * swrDec >= annualSpending + mortPVFrom(targetRetireAge) * swrDec;
         }
         // Bridge years: outside must fund spending until preservation
         let s = sAtRet, o = oAtRet;
@@ -1422,7 +1477,7 @@
           if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper);
-          o = o * (1 + realRetOut) - grossUp(annualSpending);
+          o = o * (1 + realRetOut) - grossUp(annualSpending + mortAt(age));
           if (o < 0) return false;
         }
         // At preservation, combined super + outside must support spending at SWR.
@@ -1430,7 +1485,7 @@
         // preservation, so it must count. Using super alone made Barista unreachable even
         // with a large barista income, since SG is capped at the concessional cap and the
         // income mostly builds OUTSIDE wealth.)
-        return (s + o) >= fireNumber;
+        return (s + o) >= fireNumber + mortPVFrom(preservationAge);
       };
 
       const findBaristaAge = () => {
@@ -1448,17 +1503,17 @@
       const canFullyRetireAt = (retireAge, sNow, oNow) => {
         let s = sNow, o = oNow;
         if (retireAge >= preservationAge) {
-          return (s + o) >= fireNumber;
+          return (s + o) >= fireNumber + mortPVFrom(retireAge);
         }
         for (let a = retireAge; a < preservationAge; a++) {
           const purchase = purchaseRealAtAge(a);
           if (purchase > 0) o = o - grossUp(purchase);
           if (o < 0) return false;
           s = s * (1 + realRetSuper);
-          o = o * (1 + realRetOut) - grossUp(annualSpending);
+          o = o * (1 + realRetOut) - grossUp(annualSpending + mortAt(a));
           if (o < 0) return false;
         }
-        return (s + o) >= fireNumber;
+        return (s + o) >= fireNumber + mortPVFrom(preservationAge);
       };
       const findFullFireAge = () => {
         let sS = superBalance, sO = outsideBalance;
@@ -1492,15 +1547,15 @@
       // the job's SG flows into super; spending gap drawn from outside).
       const currentYear = new Date().getFullYear();
       const buildProjection = (mode) => {
-        let downshiftAge = null, downshiftSGNet = 0, downshiftGap = 0;
+        let downshiftAge = null, downshiftSGNet = 0, downshiftGapAt = () => 0;
         if (mode === 'coast' && coastRetireAge != null) {
           downshiftAge = effectiveCoastStart;
           downshiftSGNet = coastJobNetSuper;
-          downshiftGap = coastJobGap;
+          downshiftGapAt = coastGapAt;
         } else if (mode === 'barista' && baristaAge != null) {
           downshiftAge = baristaAge;
           downshiftSGNet = baristaSGContrib.netSuperContrib;
-          downshiftGap = baristaSpendingGap;
+          downshiftGapAt = baristaGapAt;
         }
 
         const proj = [];
@@ -1541,7 +1596,7 @@
               // Coast/Barista phase: SG flows in, outside funds spending gap (grossed up)
               pSuper = pSuper * (1 + realRetSuper) + downshiftSGNet;
               pOutside = pOutside * (1 + realRetOut);
-              drawOutside(age, downshiftGap);
+              drawOutside(age, downshiftGapAt(age));
             } else if (age < targetRetireAge) {
               // Full-time saving phase
               const c = calcYearContribs(salaryAtAge(age), sg, voluntarySuper, cap);
@@ -1551,13 +1606,13 @@
               // Retired, pre-preservation: drawdown from outside (grossed up for CGT)
               pSuper = pSuper * (1 + realRetSuper);
               pOutside = pOutside * (1 + realRetOut);
-              drawOutside(age, annualSpending);
+              drawOutside(age, annualSpending + mortAt(age));
             } else {
               // Post-preservation: drawdown from super (pension phase, tax-free);
               // once super is exhausted the remainder comes from outside-super.
               pSuper = pSuper * (1 + realRetSuperPension);
               pOutside = pOutside * (1 + realRetOut);
-              drawSuperThenOutside(age, annualSpending);
+              drawSuperThenOutside(age, annualSpending + mortAt(age));
             }
           }
         }
@@ -1629,7 +1684,7 @@
           const purchase = purchaseRealAtAge(age);
           if (purchase > 0) o = Math.max(0, o - grossUp(purchase));
           s = s * (1 + realRetSuper) + baristaSGContrib.netSuperContrib;
-          o = Math.max(0, o * (1 + realRetOut) - grossUp(baristaSpendingGap));
+          o = Math.max(0, o * (1 + realRetOut) - grossUp(baristaGapAt(age)));
         }
         baristaPortfolioAtRetire = s + o;
       }
@@ -1691,6 +1746,7 @@
         projectionBarista,
         depletedAge: { full: fullProj.depletedAge, coast: coastProj.depletedAge, barista: baristaProj.depletedAge },
         projectionEndAge: projection[projection.length - 1].age,
+        mortOn, mortgageEndAge: mortOn ? mortgagePayoffAge : null,
       };
     }
 

@@ -385,9 +385,10 @@
     );
 
     const TopNav = ({ active }) => (
-      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
         {[
           { id: "money", href: "./money.html", label: "Money" },
+          { id: "loan", href: "./loan.html", label: "Home loan" },
           { id: "fire", href: "./", label: "FIRE Milestones" },
         ].map(l => (
           <a key={l.id} href={l.href} style={{
@@ -933,7 +934,7 @@
                 {syncNote && <div style={{ fontSize: 11, color: T.green, marginTop: 8 }}>✓ {syncNote}</div>}
                 <div style={{ fontSize: 11, color: T.textDim, marginTop: 10, lineHeight: 1.5 }}>
                   Salary, voluntary super and assumptions stay in FIRE Milestones — FIRE models gross salary, while this page
-                  tracks take-home pay. Untick “in retirement” for costs that end before you retire (e.g. the mortgage).
+                  tracks take-home pay. Leave the mortgage unticked here — the <a href="./loan.html" style={{ color: T.accent }}>Home loan</a> page sends its repayments and payoff age to FIRE separately.
                 </div>
               </Card>
             </div>
